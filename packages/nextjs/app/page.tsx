@@ -40,7 +40,7 @@ const Home: NextPage = () => {
           <p className="text-center text-lg">
             Edit your smart contract{" "}
             <code className="italic bg-base-300 text-base font-bold max-w-full break-words break-all inline-block">
-              YourContract.sol
+              LandAuction.sol
             </code>{" "}
             in{" "}
             <code className="italic bg-base-300 text-base font-bold max-w-full break-words break-all inline-block">
