@@ -4,7 +4,7 @@ import React, { useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { hardhat } from "viem/chains";
-import { Bars3Icon, BugAntIcon, ChartBarIcon, HomeIcon, ShoppingBagIcon } from "@heroicons/react/24/outline";
+import { Bars3Icon, BugAntIcon, HomeIcon } from "@heroicons/react/24/outline";
 import { FaucetButton, RainbowKitCustomConnectButton } from "~~/components/scaffold-eth";
 import { useOutsideClick, useTargetNetwork } from "~~/hooks/scaffold-eth";
 
@@ -26,14 +26,14 @@ export const menuLinks: HeaderMenuLink[] = [
     icon: <span className="text-sm leading-none">🌾</span>,
   },
   {
-    label: "Market",
-    href: "/market",
-    icon: <ChartBarIcon className="h-4 w-4" />,
+    label: "Dishes",
+    href: "/dishes",
+    icon: <span className="text-sm leading-none">🍽</span>,
   },
   {
     label: "Shop",
     href: "/shop",
-    icon: <ShoppingBagIcon className="h-4 w-4" />,
+    icon: <span className="text-sm leading-none">🌱</span>,
   },
   {
     label: "Debug",

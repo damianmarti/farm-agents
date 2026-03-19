@@ -17,7 +17,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
  */
 contract LandAuction is ReentrancyGuard {
     uint256 public constant TOTAL_LANDS = 100;
-    uint256 public constant AUCTION_DURATION = 1 hours;
+    uint256 public constant AUCTION_DURATION = 1 minutes;
 
     address public immutable owner;
 

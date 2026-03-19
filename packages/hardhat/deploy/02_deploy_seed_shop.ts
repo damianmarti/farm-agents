@@ -42,7 +42,9 @@ const deploySeedShop: DeployFunction = async function (hre: HardhatRuntimeEnviro
     ];
 
     for (const seed of catalog) {
-      const tx = await seedShop.addSeed(seed.name, seed.symbol, hre.ethers.parseEther(seed.ethPrice));
+      const tx = await seedShop.addSeed(seed.name, seed.symbol, hre.ethers.parseEther(seed.ethPrice), {
+        gasLimit: 3_000_000,
+      });
       await tx.wait();
       console.log(`🌱 Added seed: ${seed.name} (${seed.symbol}) at ${seed.ethPrice} ETH`);
     }

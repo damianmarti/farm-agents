@@ -273,6 +273,7 @@ const deployFarmManager: DeployFunction = async function (hre: HardhatRuntimeEnv
         c.harvestYield,
         c.fruitName,
         c.fruitSymbol,
+        { gasLimit: 3_000_000 },
       );
       await tx.wait();
       console.log(`🌾 Config added: seedId=${seedId} ${c.fruitName} (${c.fruitSymbol})`);

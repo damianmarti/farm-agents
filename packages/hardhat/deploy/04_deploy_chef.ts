@@ -170,6 +170,7 @@ const deployChef: DeployFunction = async function (hre: HardhatRuntimeEnvironmen
         recipe.dishAmount,
         recipe.dishName,
         recipe.dishSymbol,
+        { gasLimit: 3_000_000 },
       );
       await tx.wait();
       console.log(`🍳 Recipe added: ${recipe.name}`);

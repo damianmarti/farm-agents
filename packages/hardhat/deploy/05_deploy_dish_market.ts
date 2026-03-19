@@ -24,6 +24,7 @@ const deployDishMarket: DeployFunction = async function (hre: HardhatRuntimeEnvi
     const tx = await signer.sendTransaction({
       to: deployResult.address,
       value: hre.ethers.parseEther("1"),
+      gasLimit: 100_000,
     });
     await tx.wait();
     console.log("💰 DishMarket funded with 1 ETH");
