@@ -357,7 +357,7 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 45,
+      deployedOnBlock: 46,
     },
     DishMarket: {
       address: "0x82e01223d51Eb87e16A03E24687EDF0F294da6f1",
@@ -843,7 +843,7 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 56,
+      deployedOnBlock: 57,
     },
     FarmManager: {
       address: "0x4ed7c70F96B99c776995fB64377f0d4aB3B0e1C1",
@@ -1479,7 +1479,7 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 24,
+      deployedOnBlock: 25,
     },
     LandAuction: {
       address: "0x5FbDB2315678afecb367f032d93F642f64180aa3",
@@ -1824,7 +1824,7 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 2,
+      deployedOnBlock: 3,
     },
     SeedShop: {
       address: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
@@ -2121,7 +2121,7 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 3,
+      deployedOnBlock: 4,
     },
   },
 } as const;

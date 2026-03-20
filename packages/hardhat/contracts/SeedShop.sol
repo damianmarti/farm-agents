@@ -12,6 +12,7 @@ import { SeedToken } from "./SeedToken.sol";
  */
 contract SeedShop is ReentrancyGuard {
     address public immutable owner;
+    address public dishMarket;
 
     struct Seed {
         SeedToken token;   // ERC20 contract for this seed type
@@ -41,6 +42,10 @@ contract SeedShop is ReentrancyGuard {
     constructor(address _owner) {
         if (_owner == address(0)) revert ZeroAddress();
         owner = _owner;
+    }
+
+    function setDishMarket(address _dishMarket) external onlyOwner {
+        dishMarket = _dishMarket;
     }
 
     modifier onlyOwner() {
@@ -81,6 +86,12 @@ contract SeedShop is ReentrancyGuard {
         if (msg.value != seed.price * quantity) revert WrongETHAmount();
 
         seed.token.mint(msg.sender, quantity);
+
+        // Forward ETH to DishMarket treasury (or hold for owner withdrawal)
+        if (dishMarket != address(0)) {
+            (bool success, ) = dishMarket.call{ value: msg.value }("");
+            if (!success) revert TransferFailed();
+        }
 
         emit SeedPurchased(seedId, msg.sender, quantity, msg.value);
     }

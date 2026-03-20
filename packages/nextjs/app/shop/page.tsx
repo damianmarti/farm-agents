@@ -84,8 +84,8 @@ function SeedCard({ seed, onBuy, isBuying }: SeedCardProps) {
   const { isConnected } = useAccount();
 
   // farmConfigs tuple indices:
-  // [0]=maxCapacity [1]=waterInterval [2]=maturationTime [3]=rotTime
-  // [4]=cleanupCost [5]=harvestYield  [6]=fruitToken     [7]=configured
+  // [0]=maxCapacity [1]=maturationTime [2]=rotTime
+  // [3]=cleanupCost [4]=harvestYield   [5]=fruitToken  [6]=configured
   const { data: cfg } = useScaffoldReadContract({
     contractName: "FarmManager",
     functionName: "farmConfigs",
@@ -99,7 +99,7 @@ function SeedCard({ seed, onBuy, isBuying }: SeedCardProps) {
   });
 
   const totalCost = price !== undefined ? price * BigInt(qty) : undefined;
-  const configured = cfg?.[7] ?? false;
+  const configured = cfg?.[6] ?? false;
 
   const handleBuy = () => {
     if (price !== undefined) onBuy(seed.id, qty, price);
@@ -130,11 +130,10 @@ function SeedCard({ seed, onBuy, isBuying }: SeedCardProps) {
         {/* ── Farming stats ── */}
         {configured && cfg ? (
           <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs bg-base-200/60 rounded-lg px-3 py-2.5">
-            <StatRow label="Water every" value={fmtSecs(cfg[1])} />
-            <StatRow label="Matures in" value={fmtSecs(cfg[2])} />
-            <StatRow label="Rot window" value={fmtSecs(cfg[3])} />
-            <StatRow label="Yield" value={`${cfg[5]} per seed`} />
-            <StatRow label="Cleanup cost" value={`${fmtEth(cfg[4])} ETH`} />
+            <StatRow label="Matures in" value={fmtSecs(cfg[1])} />
+            <StatRow label="Rot window" value={fmtSecs(cfg[2])} />
+            <StatRow label="Yield" value={`${cfg[4]} per seed`} />
+            <StatRow label="Cleanup cost" value={`${fmtEth(cfg[3])} ETH`} />
             <StatRow label="Max / plot" value={`${cfg[0]} seeds`} />
           </div>
         ) : (

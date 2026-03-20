@@ -924,7 +924,7 @@ const DishesPage: NextPage = () => {
               step: "1",
               icon: "🌱",
               title: "Grow",
-              desc: "Buy seeds, plant on your land, water regularly, harvest fruit tokens.",
+              desc: "Buy seeds, plant on your land, wait for maturity, harvest fruit tokens.",
             },
             {
               step: "2",

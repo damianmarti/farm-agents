@@ -488,14 +488,11 @@ function LandDetailPanel({
   const isOwner = !!userAddr && !!owner && owner.toLowerCase() === userAddr.toLowerCase();
 
   const now = Math.floor(Date.now() / 1000);
-  const harvestAt = plot && cfg ? Number(plot[2]) + Number(cfg[2]) : null;
-  const waterDueAt = plot && cfg ? Number(plot[3]) + Number(cfg[1]) : null;
+  const harvestAt = plot && cfg ? Number(plot[2]) + Number(cfg[1]) : null;
   const harvestIn = harvestAt !== null ? harvestAt - now : null;
-  const waterDueIn = waterDueAt !== null ? waterDueAt - now : null;
-  const waterUrgent = waterDueIn !== null && waterDueIn < 20;
 
   const seedMeta = plot ? SEED_OPTIONS[Number(plot[0])] : null;
-  const fruitYield = plot && cfg ? Number(plot[1]) * Number(cfg[5]) : 0;
+  const fruitYield = plot && cfg ? Number(plot[1]) * Number(cfg[3]) : 0;
 
   if (landId === currentAuctionId) {
     return (
@@ -557,19 +554,6 @@ function LandDetailPanel({
               </p>
             </div>
           </div>
-          <div
-            className={[
-              "rounded-xl p-3 text-sm",
-              waterUrgent ? "bg-error/15 border border-error/30" : "bg-base-200/70",
-            ].join(" ")}
-          >
-            <p className="text-xs text-base-content/40 mb-1">Next watering due</p>
-            <p className={`font-semibold ${waterUrgent ? "text-error" : ""}`}>
-              {waterDueIn !== null && waterDueIn > 0
-                ? `💧 in ${fmtCountdown(waterDueIn)}`
-                : "⚠️ Overdue — water now or plot will rot!"}
-            </p>
-          </div>
         </div>
       )}
 
@@ -586,7 +570,7 @@ function LandDetailPanel({
               {fruitYield !== 1 ? "s" : ""}
             </p>
             <p className="text-xs text-error/60 mt-1">
-              Rot window: {cfg[3] !== undefined ? fmtCountdown(Number(cfg[3])) : "—"} after maturity
+              Rot window: {cfg[2] !== undefined ? fmtCountdown(Number(cfg[2])) : "—"} after maturity
             </p>
           </div>
         </div>
@@ -601,7 +585,7 @@ function LandDetailPanel({
           <div>
             <p className="font-bold text-base">{stateNum === 3 ? "Plot rotted" : "Harvested"} — cleanup needed</p>
             <p className="text-sm text-base-content/50 mt-0.5">
-              Cost: <span className="font-mono font-semibold">{formatEther(cfg[4])} ETH</span>
+              Cost: <span className="font-mono font-semibold">{formatEther(cfg[3])} ETH</span>
             </p>
           </div>
         </div>
@@ -617,16 +601,6 @@ function LandDetailPanel({
 
       {/* Actions */}
       <div className="flex flex-wrap gap-2">
-        {stateNum === 1 && (
-          <button
-            onClick={() => writeFarm({ functionName: "water", args: [BigInt(landId)] })}
-            disabled={farmPending}
-            className="btn btn-info btn-sm gap-1"
-          >
-            {farmPending ? <span className="loading loading-spinner loading-xs" /> : "💧"}
-            Water
-          </button>
-        )}
         {stateNum === 2 && isOwner && (
           <button
             onClick={() => writeFarm({ functionName: "harvest", args: [BigInt(landId)] })}
@@ -639,12 +613,12 @@ function LandDetailPanel({
         )}
         {(stateNum === 3 || stateNum === 4) && isOwner && cfg && (
           <button
-            onClick={() => writeFarm({ functionName: "cleanUp", args: [BigInt(landId)], value: cfg[4] })}
+            onClick={() => writeFarm({ functionName: "cleanUp", args: [BigInt(landId)], value: cfg[3] })}
             disabled={farmPending}
             className="btn btn-warning btn-sm gap-1"
           >
             {farmPending ? <span className="loading loading-spinner loading-xs" /> : "🧹"}
-            Clean Up ({formatEther(cfg[4])} ETH)
+            Clean Up ({formatEther(cfg[3])} ETH)
           </button>
         )}
         {stateNum === 2 && !isOwner && <p className="text-xs text-base-content/40 self-center">Owner must harvest</p>}

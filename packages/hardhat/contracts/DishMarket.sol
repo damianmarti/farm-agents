@@ -10,19 +10,21 @@ import { SeedShop } from "./SeedShop.sol";
 
 /**
  * @title DishMarket
- * @notice Reverse auction that demands a different dish every minute.
+ * @notice Reverse auction that demands a different dish every 10 seconds.
  *
- * @dev Each minute a dish is selected pseudo-randomly using `minute % recipeCount`.
- *      Any holder of that dish can escrow 1 token and submit an ETH ask price.
- *      After the minute ends, only the winner (lowest ask) can call settle() —
- *      their dish is burned and they receive their ETH in the same transaction.
- *      Non-winners can withdraw their escrowed dish at any time once the minute ends,
+ * @dev Each epoch (10 s) a dish is selected using `epoch % recipeCount`.
+ *      Any holder of that dish can escrow tokens and submit an ETH ask price.
+ *      After the epoch ends, only the winner (lowest ask) can call settle() —
+ *      their dishes are burned and they receive their ETH in the same transaction.
+ *      Non-winners can withdraw their escrowed dishes at any time once the epoch ends,
  *      without waiting for the winner to settle.
  *
  *      The contract must be funded with ETH (via receive()) to pay winners.
  *      `availableFunds` tracks uncommitted ETH to prevent over-committing the treasury.
  */
 contract DishMarket is ReentrancyGuard {
+    uint256 public constant EPOCH_DURATION = 10; // seconds per demand epoch
+
     address public immutable owner;
     Chef public immutable chef;
     FarmManager public immutable farmManager;
@@ -31,23 +33,24 @@ contract DishMarket is ReentrancyGuard {
 
     struct Offer {
         address seller;
-        uint256 askPrice; // ETH (wei) the seller wants
+        uint256 askPrice; // ETH per dish (wei) the seller wants
+        uint256 amount;   // number of dishes offered
         bool claimed;     // true once dish returned (loser) or burned (winner)
     }
 
-    struct MinuteState {
+    struct EpochState {
         uint256 recipeId;       // snapshotted on first offer to avoid modulo drift
         bool hasOffers;
         bool settled;
-        uint256 winnerIndex;    // index into _offers[minute]
+        uint256 winnerIndex;    // index into _offers[epoch]
         uint256 winnerAskPrice; // running lowest ask (updated on each new offer)
     }
 
     // ---- Storage ----
 
-    mapping(uint256 => Offer[]) private _offers;         // minute => offers
-    mapping(uint256 => MinuteState) public minuteState;  // minute => state
-    mapping(uint256 => mapping(address => bool)) public hasOffered; // minute => user => offered
+    mapping(uint256 => Offer[]) private _offers;          // epoch => offers
+    mapping(uint256 => EpochState) public epochState;     // epoch => state
+    mapping(uint256 => mapping(address => bool)) public hasOffered; // epoch => user => offered
 
     uint256 public availableFunds; // uncommitted ETH available to pay winners
 
@@ -60,7 +63,7 @@ contract DishMarket is ReentrancyGuard {
     error AskPriceTooHigh();
     error AskPriceExceedsCap();
     error AlreadyOffered();
-    error MinuteNotOver();
+    error EpochNotOver();
     error AlreadySettled();
     error NoOffers();
     error NotWinner();
@@ -71,12 +74,13 @@ contract DishMarket is ReentrancyGuard {
     error InvalidOfferIndex();
     error TransferFailed();
     error TokenNotRegistered();
+    error ZeroAmount();
 
     // ---- Events ----
 
-    event OfferSubmitted(uint256 indexed minute, uint256 indexed recipeId, address indexed seller, uint256 askPrice);
-    event MinuteSettled(uint256 indexed minute, uint256 indexed recipeId, address indexed winner, uint256 askPrice);
-    event OfferWithdrawn(uint256 indexed minute, uint256 offerIndex, address indexed seller);
+    event OfferSubmitted(uint256 indexed epoch, uint256 indexed recipeId, address indexed seller, uint256 askPrice);
+    event EpochSettled(uint256 indexed epoch, uint256 indexed recipeId, address indexed winner, uint256 askPrice);
+    event OfferWithdrawn(uint256 indexed epoch, uint256 offerIndex, address indexed seller);
     event Funded(address indexed funder, uint256 amount);
 
     // ---- Constructor ----
@@ -111,42 +115,55 @@ contract DishMarket is ReentrancyGuard {
 
     // ---- View ----
 
-    /// @notice Current minute index (block.timestamp / 60).
-    function currentMinute() public view returns (uint256) {
-        return block.timestamp / 60;
+    /// @notice Current epoch index (block.timestamp / EPOCH_DURATION).
+    function currentEpoch() public view returns (uint256) {
+        return block.timestamp / EPOCH_DURATION;
+    }
+
+    // ---- Backward-compatible aliases ----
+
+    /// @notice Alias for currentEpoch() — kept for frontend/bot compatibility.
+    function currentMinute() external view returns (uint256) {
+        return currentEpoch();
+    }
+
+    /// @notice Alias for epochState — kept for frontend/bot compatibility.
+    function minuteState(uint256 epoch) external view returns (
+        uint256 recipeId, bool hasOffers_, bool settled,
+        uint256 winnerIndex, uint256 winnerAskPrice
+    ) {
+        EpochState storage s = epochState[epoch];
+        return (s.recipeId, s.hasOffers, s.settled, s.winnerIndex, s.winnerAskPrice);
     }
 
     /**
-     * @notice The dish demanded during `minute`.
+     * @notice The dish demanded during a given epoch.
      * @dev Uses the snapshotted recipeId if offers exist, otherwise computes live.
-     *      Snapshotting prevents modulo drift when new recipes are added to Chef.
      */
-    function getDemandForMinute(uint256 minute) public view returns (uint256 recipeId) {
-        MinuteState storage state = minuteState[minute];
+    function getDemandForMinute(uint256 epoch) public view returns (uint256 recipeId) {
+        EpochState storage state = epochState[epoch];
         if (state.hasOffers) return state.recipeId;
         uint256 count = chef.recipeCount();
         if (count == 0) revert NoRecipes();
-        return minute % count;
+        return epoch % count;
     }
 
     /// @notice The dish demanded right now.
     function currentDemand() external view returns (uint256 recipeId) {
-        return getDemandForMinute(currentMinute());
+        return getDemandForMinute(currentEpoch());
     }
 
-    /// @notice All offers submitted for a given minute.
-    function getOffers(uint256 minute) external view returns (Offer[] memory) {
-        return _offers[minute];
+    /// @notice All offers submitted for a given epoch.
+    function getOffers(uint256 epoch) external view returns (Offer[] memory) {
+        return _offers[epoch];
     }
 
     // ---- Internal helpers ----
 
     /**
-     * @notice Computes the maximum allowed ask price for a recipe: 2 × total seed cost.
-     * @dev Iterates the recipe's ingredient tokens. Every token must be registered in FarmManager
-     *      as a fruit token — reverts with TokenNotRegistered otherwise.
-     *      Converts each required fruit amount to seed units using ceiling division
-     *      (partial seeds still cost a full seed), then multiplies by the seed price.
+     * @notice Computes the maximum allowed ask price for a recipe.
+     * @dev Multiplier scales with ingredient count: 20× (1-3), 30× (4+)
+     *      to compensate for the higher coordination cost of multi-ingredient dishes.
      * @param recipeId The recipe whose seed cost to compute.
      */
     function _recipeSeedCostCap(uint256 recipeId) internal view returns (uint256) {
@@ -158,56 +175,60 @@ contract DishMarket is ReentrancyGuard {
             address token = ingredients[i].token;
             if (!farmManager.isFruitToken(token)) revert TokenNotRegistered();
             uint256 seedId = farmManager.fruitToSeedId(token);
-            uint256 yield  = farmManager.harvestYield(seedId); // fruit tokens per seed
-            // Convert fruit amount → seeds needed (ceiling: partial seeds cost a full seed)
+            uint256 yield  = farmManager.harvestYield(seedId);
             uint256 seeds  = (ingredients[i].amount + yield - 1) / yield;
             seedCost += shop.seedPrice(seedId) * seeds;
             unchecked { ++i; }
         }
-        return seedCost * 2;
+        uint256 multiplier = len >= 4 ? 30 : 20;
+        return seedCost * multiplier;
     }
 
     // ---- Actions ----
 
     /**
-     * @notice Submit an offer to sell the currently demanded dish.
-     * @dev Escrows 1 DishToken. Requires prior approve(dishMarket, 1) on the DishToken.
-     *      One offer per address per minute. The running lowest ask is tracked on-chain
-     *      so settle() is O(1).
-     * @param askPrice ETH (wei) the seller wants to receive for their dish.
+     * @notice Submit an offer to sell one or more of the currently demanded dish.
+     * @dev Escrows `amount` DishTokens. Requires prior approve(dishMarket, amount).
+     *      One offer per address per epoch. The running lowest ask is tracked on-chain
+     *      so settle() is O(1). The winner receives askPrice × amount ETH.
+     * @param askPrice ETH per dish (wei) the seller wants to receive.
+     * @param amount   Number of dishes to sell.
      */
-    function submitOffer(uint256 askPrice) external nonReentrant {
+    function submitOffer(uint256 askPrice, uint256 amount) external nonReentrant {
         uint256 count = chef.recipeCount();
         if (count == 0) revert NoRecipes();
         if (askPrice == 0) revert ZeroAskPrice();
-        if (askPrice > availableFunds) revert AskPriceTooHigh();
+        if (amount == 0) revert ZeroAmount();
 
-        uint256 minute = currentMinute();
-        if (hasOffered[minute][msg.sender]) revert AlreadyOffered();
+        uint256 totalPayment = askPrice * amount;
+        if (totalPayment > availableFunds) revert AskPriceTooHigh();
 
-        MinuteState storage state = minuteState[minute];
+        uint256 epoch = currentEpoch();
+        if (hasOffered[epoch][msg.sender]) revert AlreadyOffered();
+
+        EpochState storage state = epochState[epoch];
 
         // Snapshot recipeId on first offer to prevent modulo drift
         uint256 recipeId;
         if (!state.hasOffers) {
-            recipeId = minute % count;
+            recipeId = epoch % count;
             state.recipeId = recipeId;
         } else {
             recipeId = state.recipeId;
         }
 
-        // Enforce price cap: ask price must not exceed 2× the seed cost of the dish
+        // Enforce price cap: ask price per dish must not exceed 20× the seed cost
         uint256 cap = _recipeSeedCostCap(recipeId);
         if (askPrice > cap) revert AskPriceExceedsCap();
 
         (, , , address dishTokenAddr) = chef.getRecipe(recipeId);
 
         // Effects before external call (CEI + nonReentrant mutex)
-        uint256 idx = _offers[minute].length;
-        _offers[minute].push(Offer({ seller: msg.sender, askPrice: askPrice, claimed: false }));
-        hasOffered[minute][msg.sender] = true;
+        uint256 idx = _offers[epoch].length;
+        _offers[epoch].push(Offer({ seller: msg.sender, askPrice: askPrice, amount: amount, claimed: false }));
+        hasOffered[epoch][msg.sender] = true;
 
-        // Update running minimum. hasOffers set first to keep condition unambiguous.
+        // Update running minimum (by per-dish askPrice)
         bool isFirstOffer = !state.hasOffers;
         state.hasOffers = true;
         if (isFirstOffer || askPrice < state.winnerAskPrice) {
@@ -215,28 +236,27 @@ contract DishMarket is ReentrancyGuard {
             state.winnerIndex = idx;
         }
 
-        IERC20(dishTokenAddr).transferFrom(msg.sender, address(this), 1);
+        IERC20(dishTokenAddr).transferFrom(msg.sender, address(this), amount);
 
-        emit OfferSubmitted(minute, recipeId, msg.sender, askPrice);
+        emit OfferSubmitted(epoch, recipeId, msg.sender, askPrice);
     }
 
     /**
-     * @notice Winner settles their auction, burning their dish and receiving ETH.
-     * @dev Only callable by the winner (lowest ask). ETH is sent directly in the
-     *      same transaction — no separate claim needed.
-     * @param minute The minute index to settle.
+     * @notice Winner settles their auction, burning all their escrowed dishes and receiving ETH.
+     * @dev Only callable by the winner (lowest per-dish ask). Payment = askPrice × amount.
+     * @param epoch The epoch index to settle.
      */
-    function settle(uint256 minute) external nonReentrant {
-        if (currentMinute() <= minute) revert MinuteNotOver();
+    function settle(uint256 epoch) external nonReentrant {
+        if (currentEpoch() <= epoch) revert EpochNotOver();
 
-        MinuteState storage state = minuteState[minute];
+        EpochState storage state = epochState[epoch];
         if (state.settled) revert AlreadySettled();
         if (!state.hasOffers) revert NoOffers();
 
-        Offer storage winner = _offers[minute][state.winnerIndex];
+        Offer storage winner = _offers[epoch][state.winnerIndex];
         if (msg.sender != winner.seller) revert NotWinner();
 
-        uint256 payment = state.winnerAskPrice;
+        uint256 payment = winner.askPrice * winner.amount;
         if (availableFunds < payment) revert InsufficientFunds();
 
         // Effects
@@ -244,11 +264,11 @@ contract DishMarket is ReentrancyGuard {
         availableFunds -= payment;
         winner.claimed = true;
 
-        // Burn the winner's escrowed dish token
+        // Burn the winner's escrowed dish tokens
         (, , , address dishTokenAddr) = chef.getRecipe(state.recipeId);
-        ERC20Burnable(dishTokenAddr).burn(1);
+        ERC20Burnable(dishTokenAddr).burn(winner.amount);
 
-        emit MinuteSettled(minute, state.recipeId, winner.seller, payment);
+        emit EpochSettled(epoch, state.recipeId, winner.seller, payment);
 
         // Pay the winner directly (they are the caller)
         (bool ok, ) = winner.seller.call{ value: payment }("");
@@ -258,34 +278,30 @@ contract DishMarket is ReentrancyGuard {
     /**
      * @notice Reclaim an escrowed dish token for a non-winning offer.
      * @dev Two withdrawal paths:
-     *   - During the minute: allowed if this offer is NOT the current lowest ask.
-     *   - After the minute ends: allowed for any non-winner, with no dependency
+     *   - During the epoch: allowed if this offer is NOT the current lowest ask.
+     *   - After the epoch ends: allowed for any non-winner, with no dependency
      *     on whether the winner has called settle() yet.
      *   The winner's offer can only be freed via settle().
-     * @param minute     The minute index the offer was submitted in.
-     * @param offerIndex Index of the offer within that minute's offer list.
+     * @param epoch      The epoch index the offer was submitted in.
+     * @param offerIndex Index of the offer within that epoch's offer list.
      */
-    function withdrawOffer(uint256 minute, uint256 offerIndex) external nonReentrant {
-        if (offerIndex >= _offers[minute].length) revert InvalidOfferIndex();
+    function withdrawOffer(uint256 epoch, uint256 offerIndex) external nonReentrant {
+        if (offerIndex >= _offers[epoch].length) revert InvalidOfferIndex();
 
-        MinuteState storage state = minuteState[minute];
+        EpochState storage state = epochState[epoch];
 
         // The winner is always blocked from withdrawing here — they must use settle()
         if (state.hasOffers && offerIndex == state.winnerIndex) revert OfferIsCurrentWinner();
 
-        // During the minute, non-winners can withdraw early
-        // After the minute ends, non-winners can withdraw freely (no settlement needed)
-        // (The winner check above already blocks the winner in both cases)
-
-        Offer storage offer = _offers[minute][offerIndex];
+        Offer storage offer = _offers[epoch][offerIndex];
         if (offer.seller != msg.sender) revert NotYourOffer();
         if (offer.claimed) revert AlreadyClaimed();
 
         offer.claimed = true;
 
         (, , , address dishTokenAddr) = chef.getRecipe(state.recipeId);
-        IERC20(dishTokenAddr).transfer(msg.sender, 1);
+        IERC20(dishTokenAddr).transfer(msg.sender, offer.amount);
 
-        emit OfferWithdrawn(minute, offerIndex, msg.sender);
+        emit OfferWithdrawn(epoch, offerIndex, msg.sender);
     }
 }

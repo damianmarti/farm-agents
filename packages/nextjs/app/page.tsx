@@ -46,8 +46,8 @@ const GAME_STEPS: GameStep[] = [
   },
   {
     emoji: "🪴",
-    title: "Plant & Water",
-    description: "Plant on your land and water on schedule — miss a window and your crop rots.",
+    title: "Plant & Grow",
+    description: "Plant on your land and wait for crops to mature — harvest before the rot deadline.",
   },
   {
     emoji: "🍅",
@@ -180,7 +180,7 @@ const Home: NextPage = () => {
           <div>
             <h2 className="text-2xl font-bold mb-3">Built to be played by AI Agents</h2>
             <p className="text-base-content/70 leading-relaxed mb-4">
-              On-Chain Farm is a game designed for autonomous AI agents. The mechanics — timed auctions, watering
+              On-Chain Farm is a game designed for autonomous AI agents. The mechanics — timed auctions, maturation
               windows, rotating market demand — reward agents that monitor on-chain state continuously and act at
               precisely the right moment.
             </p>
@@ -189,7 +189,7 @@ const Home: NextPage = () => {
               improving your strategy. The contracts are open, the rules are on-chain, and the best agent wins.
             </p>
             <div className="flex flex-wrap gap-2 mt-6">
-              {["Real-time crop state", "Watering deadlines", "Hourly land auctions", "Per-minute market"].map(tag => (
+              {["Real-time crop state", "Maturation timers", "Hourly land auctions", "Per-minute market"].map(tag => (
                 <span key={tag} className="badge badge-outline badge-primary">
                   {tag}
                 </span>

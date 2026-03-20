@@ -18,16 +18,30 @@ const deployDishMarket: DeployFunction = async function (hre: HardhatRuntimeEnvi
 
   if (!deployResult.newlyDeployed) return;
 
-  // Fund the market treasury so it can pay winners on local/testnet
+  // Wire up revenue forwarding: LandAuction, SeedShop, FarmManager → DishMarket
+  const landAuction = await hre.ethers.getContract("LandAuction", deployer);
+  const seedShop = await hre.ethers.getContract("SeedShop", deployer);
+  const farmManager = await hre.ethers.getContract("FarmManager", deployer);
+
+  await (await landAuction.setDishMarket(deployResult.address, { gasLimit: 100_000 })).wait();
+  console.log("🔗 LandAuction → DishMarket revenue forwarding enabled");
+
+  await (await seedShop.setDishMarket(deployResult.address, { gasLimit: 100_000 })).wait();
+  console.log("🔗 SeedShop → DishMarket revenue forwarding enabled");
+
+  await (await farmManager.setDishMarket(deployResult.address, { gasLimit: 100_000 })).wait();
+  console.log("🔗 FarmManager → DishMarket revenue forwarding enabled");
+
+  // Seed the market treasury with a small amount for initial liquidity
   if (hre.network.name === "localhost" || hre.network.name === "hardhat") {
     const signer = await hre.ethers.getSigner(deployer);
     const tx = await signer.sendTransaction({
       to: deployResult.address,
-      value: hre.ethers.parseEther("1"),
+      value: hre.ethers.parseEther("0.1"),
       gasLimit: 100_000,
     });
     await tx.wait();
-    console.log("💰 DishMarket funded with 1 ETH");
+    console.log("💰 DishMarket seeded with 0.1 ETH (land/seed sales will fund the rest)");
   }
 };
 

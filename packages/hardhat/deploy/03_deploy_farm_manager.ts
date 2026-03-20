@@ -10,7 +10,6 @@ const MIN = 60;
  *
  * Fields:
  *   maxCapacity    — max seeds per land planting
- *   waterInterval  — seconds between required waterings
  *   maturationTime — seconds from planting to harvest-ready
  *   rotTime        — seconds after maturation before the plot rots
  *   cleanupCost    — ETH price (as string) to clean up this plot
@@ -20,10 +19,9 @@ const MIN = 60;
  */
 const FARM_CONFIGS = [
   // ── Vegetables ──────────────────────────────────────────────────────────────
-  // 0: Tomato        water=1m  mature=3m  rot=1m
+  // 0: Tomato        mature=3m  rot=1m
   {
     maxCapacity: 20,
-    waterInterval: 1 * MIN,
     maturationTime: 3 * MIN,
     rotTime: 1 * MIN,
     cleanupCost: "0.000002",
@@ -31,10 +29,9 @@ const FARM_CONFIGS = [
     fruitName: "Tomato",
     fruitSymbol: "TOM",
   },
-  // 1: Lettuce       water=1m  mature=2m  rot=1m
+  // 1: Lettuce       mature=2m  rot=1m
   {
     maxCapacity: 30,
-    waterInterval: 1 * MIN,
     maturationTime: 2 * MIN,
     rotTime: 1 * MIN,
     cleanupCost: "0.000001",
@@ -42,10 +39,9 @@ const FARM_CONFIGS = [
     fruitName: "Lettuce",
     fruitSymbol: "LET",
   },
-  // 2: Carrot        water=1m  mature=4m  rot=1m
+  // 2: Carrot        mature=4m  rot=1m
   {
     maxCapacity: 25,
-    waterInterval: 1 * MIN,
     maturationTime: 4 * MIN,
     rotTime: 1 * MIN,
     cleanupCost: "0.000002",
@@ -53,10 +49,9 @@ const FARM_CONFIGS = [
     fruitName: "Carrot",
     fruitSymbol: "CAR",
   },
-  // 3: Potato        water=2m  mature=5m  rot=2m
+  // 3: Potato        mature=5m  rot=2m
   {
     maxCapacity: 20,
-    waterInterval: 2 * MIN,
     maturationTime: 5 * MIN,
     rotTime: 2 * MIN,
     cleanupCost: "0.000003",
@@ -64,10 +59,9 @@ const FARM_CONFIGS = [
     fruitName: "Potato",
     fruitSymbol: "POT",
   },
-  // 4: Onion         water=2m  mature=6m  rot=2m
+  // 4: Onion         mature=6m  rot=2m
   {
     maxCapacity: 30,
-    waterInterval: 2 * MIN,
     maturationTime: 6 * MIN,
     rotTime: 2 * MIN,
     cleanupCost: "0.000002",
@@ -75,10 +69,9 @@ const FARM_CONFIGS = [
     fruitName: "Onion",
     fruitSymbol: "ONI",
   },
-  // 5: Pepper        water=1m  mature=4m  rot=1m
+  // 5: Pepper        mature=4m  rot=1m
   {
     maxCapacity: 15,
-    waterInterval: 1 * MIN,
     maturationTime: 4 * MIN,
     rotTime: 1 * MIN,
     cleanupCost: "0.000002",
@@ -86,10 +79,9 @@ const FARM_CONFIGS = [
     fruitName: "Pepper",
     fruitSymbol: "PEP",
   },
-  // 6: Cucumber      water=1m  mature=3m  rot=1m
+  // 6: Cucumber      mature=3m  rot=1m
   {
     maxCapacity: 20,
-    waterInterval: 1 * MIN,
     maturationTime: 3 * MIN,
     rotTime: 1 * MIN,
     cleanupCost: "0.000002",
@@ -97,10 +89,9 @@ const FARM_CONFIGS = [
     fruitName: "Cucumber",
     fruitSymbol: "CUC",
   },
-  // 7: Spinach       water=1m  mature=2m  rot=1m
+  // 7: Spinach       mature=2m  rot=1m
   {
     maxCapacity: 40,
-    waterInterval: 1 * MIN,
     maturationTime: 2 * MIN,
     rotTime: 1 * MIN,
     cleanupCost: "0.000001",
@@ -108,10 +99,9 @@ const FARM_CONFIGS = [
     fruitName: "Spinach",
     fruitSymbol: "SPI",
   },
-  // 8: Pumpkin       water=2m  mature=7m  rot=3m
+  // 8: Pumpkin       mature=7m  rot=3m
   {
     maxCapacity: 10,
-    waterInterval: 2 * MIN,
     maturationTime: 7 * MIN,
     rotTime: 3 * MIN,
     cleanupCost: "0.000005",
@@ -119,10 +109,9 @@ const FARM_CONFIGS = [
     fruitName: "Pumpkin",
     fruitSymbol: "PUMP",
   },
-  // 9: Broccoli      water=1m  mature=3m  rot=1m
+  // 9: Broccoli      mature=3m  rot=1m
   {
     maxCapacity: 20,
-    waterInterval: 1 * MIN,
     maturationTime: 3 * MIN,
     rotTime: 1 * MIN,
     cleanupCost: "0.000002",
@@ -131,10 +120,9 @@ const FARM_CONFIGS = [
     fruitSymbol: "BROC",
   },
   // ── Fruits ──────────────────────────────────────────────────────────────────
-  // 10: Strawberry   water=1m  mature=4m  rot=1m
+  // 10: Strawberry   mature=4m  rot=1m
   {
     maxCapacity: 15,
-    waterInterval: 1 * MIN,
     maturationTime: 4 * MIN,
     rotTime: 1 * MIN,
     cleanupCost: "0.000003",
@@ -142,10 +130,9 @@ const FARM_CONFIGS = [
     fruitName: "Strawberry",
     fruitSymbol: "SBERRY",
   },
-  // 11: Watermelon   water=2m  mature=7m  rot=2m
+  // 11: Watermelon   mature=7m  rot=2m
   {
     maxCapacity: 5,
-    waterInterval: 2 * MIN,
     maturationTime: 7 * MIN,
     rotTime: 2 * MIN,
     cleanupCost: "0.000005",
@@ -153,10 +140,9 @@ const FARM_CONFIGS = [
     fruitName: "Watermelon",
     fruitSymbol: "WFRUIT",
   },
-  // 12: Blueberry    water=2m  mature=5m  rot=1m
+  // 12: Blueberry    mature=5m  rot=1m
   {
     maxCapacity: 20,
-    waterInterval: 2 * MIN,
     maturationTime: 5 * MIN,
     rotTime: 1 * MIN,
     cleanupCost: "0.000003",
@@ -164,10 +150,9 @@ const FARM_CONFIGS = [
     fruitName: "Blueberry",
     fruitSymbol: "BBFRT",
   },
-  // 13: Mango        water=2m  mature=6m  rot=2m
+  // 13: Mango        mature=6m  rot=2m
   {
     maxCapacity: 10,
-    waterInterval: 2 * MIN,
     maturationTime: 6 * MIN,
     rotTime: 2 * MIN,
     cleanupCost: "0.000004",
@@ -175,10 +160,9 @@ const FARM_CONFIGS = [
     fruitName: "Mango",
     fruitSymbol: "MNGO",
   },
-  // 14: Pineapple    water=2m  mature=7m  rot=3m
+  // 14: Pineapple    mature=7m  rot=3m
   {
     maxCapacity: 5,
-    waterInterval: 2 * MIN,
     maturationTime: 7 * MIN,
     rotTime: 3 * MIN,
     cleanupCost: "0.000006",
@@ -186,10 +170,9 @@ const FARM_CONFIGS = [
     fruitName: "Pineapple",
     fruitSymbol: "PINE",
   },
-  // 15: Lemon        water=1m  mature=4m  rot=1m
+  // 15: Lemon        mature=4m  rot=1m
   {
     maxCapacity: 15,
-    waterInterval: 1 * MIN,
     maturationTime: 4 * MIN,
     rotTime: 1 * MIN,
     cleanupCost: "0.000003",
@@ -197,10 +180,9 @@ const FARM_CONFIGS = [
     fruitName: "Lemon",
     fruitSymbol: "LMN",
   },
-  // 16: Grape        water=2m  mature=5m  rot=2m
+  // 16: Grape        mature=5m  rot=2m
   {
     maxCapacity: 20,
-    waterInterval: 2 * MIN,
     maturationTime: 5 * MIN,
     rotTime: 2 * MIN,
     cleanupCost: "0.000003",
@@ -208,10 +190,9 @@ const FARM_CONFIGS = [
     fruitName: "Grape",
     fruitSymbol: "GRP",
   },
-  // 17: Peach        water=2m  mature=6m  rot=2m
+  // 17: Peach        mature=6m  rot=2m
   {
     maxCapacity: 10,
-    waterInterval: 2 * MIN,
     maturationTime: 6 * MIN,
     rotTime: 2 * MIN,
     cleanupCost: "0.000004",
@@ -219,10 +200,9 @@ const FARM_CONFIGS = [
     fruitName: "Peach",
     fruitSymbol: "PCHFRT",
   },
-  // 18: Cherry       water=2m  mature=5m  rot=1m
+  // 18: Cherry       mature=5m  rot=1m
   {
     maxCapacity: 15,
-    waterInterval: 2 * MIN,
     maturationTime: 5 * MIN,
     rotTime: 1 * MIN,
     cleanupCost: "0.000004",
@@ -230,10 +210,9 @@ const FARM_CONFIGS = [
     fruitName: "Cherry",
     fruitSymbol: "CHRRY",
   },
-  // 19: Melon        water=2m  mature=6m  rot=2m
+  // 19: Melon        mature=6m  rot=2m
   {
     maxCapacity: 8,
-    waterInterval: 2 * MIN,
     maturationTime: 6 * MIN,
     rotTime: 2 * MIN,
     cleanupCost: "0.000004",
@@ -266,7 +245,6 @@ const deployFarmManager: DeployFunction = async function (hre: HardhatRuntimeEnv
       const tx = await farmManager.addFarmConfig(
         seedId,
         c.maxCapacity,
-        c.waterInterval,
         c.maturationTime,
         c.rotTime,
         hre.ethers.parseEther(c.cleanupCost),

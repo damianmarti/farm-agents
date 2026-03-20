@@ -20,6 +20,7 @@ contract LandAuction is ReentrancyGuard {
     uint256 public constant AUCTION_DURATION = 1 minutes;
 
     address public immutable owner;
+    address public dishMarket;
 
     // ---- Auction state ----
     uint256 public currentLandId;
@@ -51,8 +52,15 @@ contract LandAuction is ReentrancyGuard {
     event AllLandsSoldOut();
     event Withdrawal(address indexed bidder, uint256 amount);
 
+    error OnlyOwner();
+
     constructor(address _owner) {
         owner = _owner;
+    }
+
+    function setDishMarket(address _dishMarket) external {
+        if (msg.sender != owner) revert OnlyOwner();
+        dishMarket = _dishMarket;
     }
 
     /**
@@ -122,7 +130,8 @@ contract LandAuction is ReentrancyGuard {
         highestBid = 0;
         auctionEndTime = 0;
 
-        (bool success, ) = owner.call{ value: amount }("");
+        address recipient = dishMarket != address(0) ? dishMarket : owner;
+        (bool success, ) = recipient.call{ value: amount }("");
         if (!success) revert TransferFailed();
 
         emit AuctionSettled(landId, winner, amount);

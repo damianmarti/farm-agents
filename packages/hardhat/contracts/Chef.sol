@@ -45,6 +45,8 @@ contract Chef is ReentrancyGuard {
 
     // user => recipeId => cooking start timestamp (0 = not cooking)
     mapping(address => mapping(uint256 => uint256)) public cookingStartTime;
+    // user => recipeId => quantity being cooked
+    mapping(address => mapping(uint256 => uint256)) public cookingQuantity;
 
     // ---- Custom errors ----
 
@@ -55,6 +57,7 @@ contract Chef is ReentrancyGuard {
     error AlreadyCooking();
     error NotCooking();
     error StillCooking();
+    error ZeroQuantity();
 
     // ---- Events ----
 
@@ -155,27 +158,27 @@ contract Chef is ReentrancyGuard {
     // ---- Cooking actions ----
 
     /**
-     * @notice Start cooking a recipe. Burns all required ingredients from the caller.
+     * @notice Start cooking a recipe. Burns all required ingredients × quantity from the caller.
      * @dev Caller must have approved Chef for each ingredient token beforehand.
      *      Only one active session per (caller, recipeId) at a time.
      * @param recipeId ID of the recipe to cook
+     * @param quantity Number of dishes to cook (burns ingredients × quantity)
      */
-    function startCooking(uint256 recipeId) external nonReentrant {
+    function startCooking(uint256 recipeId, uint256 quantity) external nonReentrant {
         Recipe storage recipe = _recipes[recipeId];
         if (!recipe.exists) revert RecipeNotFound();
+        if (quantity == 0) revert ZeroQuantity();
         if (cookingStartTime[msg.sender][recipeId] != 0) revert AlreadyCooking();
 
         // Set state before external calls.
-        // Note: CEI alone is insufficient here because a reentrant call could
-        // target claim() rather than startCooking(). The nonReentrant mutex on
-        // both functions is the primary protection against reentrancy.
         cookingStartTime[msg.sender][recipeId] = block.timestamp;
+        cookingQuantity[msg.sender][recipeId] = quantity;
 
-        // Burn all ingredients from the caller
+        // Burn all ingredients × quantity from the caller
         Ingredient[] storage ingredients = recipe.ingredients;
         uint256 len = ingredients.length;
         for (uint256 i = 0; i < len; ) {
-            ERC20Burnable(ingredients[i].token).burnFrom(msg.sender, ingredients[i].amount);
+            ERC20Burnable(ingredients[i].token).burnFrom(msg.sender, ingredients[i].amount * quantity);
             unchecked { ++i; }
         }
 
@@ -183,7 +186,7 @@ contract Chef is ReentrancyGuard {
     }
 
     /**
-     * @notice Claim a finished dish. Mints DishTokens to the caller.
+     * @notice Claim finished dishes. Mints dishAmount × quantity DishTokens to the caller.
      * @dev The caller must have a cooking session for this recipe and prepTime must have elapsed.
      * @param recipeId ID of the recipe to claim
      */
@@ -194,11 +197,15 @@ contract Chef is ReentrancyGuard {
         Recipe storage recipe = _recipes[recipeId];
         if (block.timestamp < start + recipe.prepTime) revert StillCooking();
 
+        uint256 quantity = cookingQuantity[msg.sender][recipeId];
+        uint256 totalDishes = recipe.dishAmount * quantity;
+
         // Clear session before minting (CEI)
         delete cookingStartTime[msg.sender][recipeId];
+        delete cookingQuantity[msg.sender][recipeId];
 
-        recipe.dishToken.mint(msg.sender, recipe.dishAmount);
+        recipe.dishToken.mint(msg.sender, totalDishes);
 
-        emit DishClaimed(recipeId, msg.sender, recipe.dishAmount);
+        emit DishClaimed(recipeId, msg.sender, totalDishes);
     }
 }

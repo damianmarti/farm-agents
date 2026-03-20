@@ -57,6 +57,7 @@ const config: HardhatUserConfig = {
         auto: false,
         interval: 5000, // sets interval mining to 5s
       },
+      gasPrice: 50_000_000, // 0.05 gwei — similar to Base L2
     },
     mainnet: {
       url: "https://mainnet.rpc.buidlguidl.com",

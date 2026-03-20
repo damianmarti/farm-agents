@@ -5,7 +5,7 @@
  *   1. Acquire up to MAX_LANDS land plots via LandAuction.
  *   2. Look LOOKAHEAD_MINUTES ahead to see which recipes will be demanded.
  *   3. Plant the seeds most urgently needed for those upcoming recipes.
- *   4. Water / harvest / cleanup plots as needed.
+ *   4. Harvest / cleanup plots as needed.
  *   5. Cook all recipes whose ingredients are available (multiple simultaneously).
  *   6. Submit the lowest ask for whichever dish the market currently demands.
  *   7. Settle winning offers; withdraw losing ones.
@@ -303,19 +303,11 @@ async function managePlots(
       const plot = await farmManager.plots(landId);
       const config = await farmManager.farmConfigs(plot[0]);
       await tryTx(`cleanup land #${landId}`, () =>
-        farmManager.cleanUp(landId, { value: config[4], gasLimit: 200_000 }),
+        farmManager.cleanUp(landId, { value: config[3], gasLimit: 200_000 }),
       );
     } else if (state === 1n) {
-      // ── Growing: water if due soon ──
-      const plot = await farmManager.plots(landId);
-      const config = await farmManager.farmConfigs(plot[0]);
-      const now = BigInt(Math.floor(Date.now() / 1000));
-      const nextDue = plot[3] + config[1];
-      if (now >= nextDue - 20n) {
-        await tryTx(`water land #${landId}`, () => farmManager.water(landId, { gasLimit: 100_000 }));
-      } else {
-        log(`  💧 land #${landId} — next water in ${nextDue - now}s`);
-      }
+      // ── Growing: just wait ──
+      log(`  🌱 land #${landId} — growing`);
     } else if (state === 0n) {
       // ── Empty: plant highest-priority needed seed ──
       if (seedQueue.length === 0) {
@@ -394,7 +386,7 @@ async function manageCooking(chef: Chef, dishMarket: DishMarket, botAddr: string
       await ensureApproved(ing.token, chefAddr, signer);
     }
     await tryTx(`start cooking ${recipeName} (recipe #${recipeId}, demand in ${minutesUntil}m)`, () =>
-      chef.startCooking(recipeId, { gasLimit: 600_000 }),
+      chef.startCooking(recipeId, 1, { gasLimit: 600_000 }),
     );
   }
 }
@@ -479,7 +471,7 @@ async function manageMarket(
 
   const ok = await tryTx(
     `submit offer ${ethers.formatEther(askPrice)} ETH for ${demandedName} (minute #${currentMin})`,
-    () => dishMarket.submitOffer(askPrice, { gasLimit: 600_000 }),
+    () => dishMarket.submitOffer(askPrice, 1, { gasLimit: 600_000 }),
   );
   if (ok) pendingOfferMinutes.add(currentMin);
 }
