@@ -169,6 +169,15 @@ const RECIPES: Recipe[] = [
 
 const RECIPE_COUNT = RECIPES.length;
 
+// ─── Secondary demand helper ────────────────────────────────────────────────
+// Mirrors DishMarket._secondDemandForEpoch (deterministic, no keccak needed off-chain).
+
+function secondDemandForEpoch(epoch: number, primaryId: number, count: number): number {
+  // Large-prime hash of epoch for pseudo-randomness without crypto imports
+  const raw = ((epoch * 1_234_567 + 987_654_321) >>> 0) % count;
+  return raw === primaryId ? (raw + 1) % count : raw;
+}
+
 // ─── Economics helpers ──────────────────────────────────────────────────────
 
 function recipeSeedCost(recipe: Recipe): number {
@@ -427,10 +436,14 @@ function simulate(): void {
   const recipeTotalPaid: number[] = new Array(RECIPE_COUNT).fill(0);
   const minuteOfferCounts: number[] = [];
 
+  // Track which bots have offered per (epoch, recipeId) to enforce one-offer-per-recipe-per-epoch
+  const offeredThisEpoch = new Map<string, Set<number>>(); // key: `${epoch}` → Set<botIdx> per recipe... use `${epoch}_${recipeId}`
+
   for (let t = 0; t < SIM_DURATION; t += TICK) {
+    const epoch = Math.floor(t / EPOCH_DURATION);
     const minute = Math.floor(t / 60);
     const demandedRecipeId = minute % RECIPE_COUNT;
-    const recipe = RECIPES[demandedRecipeId];
+    const secondaryRecipeId = secondDemandForEpoch(epoch, demandedRecipeId, RECIPE_COUNT);
     totalMinutes++;
 
     // Shuffle bot order each tick to avoid first-mover bias
@@ -556,85 +569,93 @@ function simulate(): void {
       }
     }
 
-    // ─── Market ─────────────────────────────────────────────────────────
+    // ─── Market — run for both demanded recipes per epoch ───────────────
     type MarketOffer = { botIdx: number; askPrice: number; amount: number };
-    const offers: MarketOffer[] = [];
-    const seedCost = recipeSeedCost(recipe);
-    const cap = recipePriceCap(recipe);
-
-    // Collect offers (shuffled order)
-    for (const bi of botOrder) {
-      const bot = bots[bi];
-      const dishCount = bot.inventory.get(demandedRecipeId) || 0;
-      if (dishCount <= 0) continue;
-
-      const targets = bot.strategy.targetRecipes[0] === -1 ? RECIPES.map(r => r.id) : bot.strategy.targetRecipes;
-      if (!targets.includes(demandedRecipeId)) continue;
-
-      let askPrice = seedCost * (bot.strategy.askPricePct / 100);
-      if (askPrice > cap) askPrice = cap;
-
-      // Undercut logic
-      if (offers.length > 0 && Math.random() < bot.strategy.aggressiveness) {
-        const lowestSoFar = Math.min(...offers.map(o => o.askPrice));
-        askPrice = Math.max(lowestSoFar * 0.92, seedCost * 0.8);
-      }
-
-      const amount = Math.min(dishCount, bot.strategy.dishesPerOffer);
-      const totalPayment = askPrice * amount;
-      if (totalPayment > treasury) continue;
-
-      if (!spendGas(bot, "submitOffer", GAS.submitOffer)) continue;
-      offers.push({ botIdx: bi, askPrice, amount });
-    }
-
-    minuteOfferCounts.push(offers.length);
-
     const MAX_WINNERS = 3;
 
-    if (offers.length === 0) {
-      emptyMinutes++;
-    } else {
-      if (offers.length > 1) contestedMinutes++;
+    let epochTotalOffers = 0;
+    let epochHasWinner = false;
 
-      // Sort by ask price ascending — cheapest offers win
-      offers.sort((a, b) => a.askPrice - b.askPrice);
+    for (const demId of [demandedRecipeId, secondaryRecipeId]) {
+      const r = RECIPES[demId];
+      const seedCost = recipeSeedCost(r);
+      const cap = recipePriceCap(r);
+      const offerKey = (bi: number) => `${epoch}_${demId}_${bi}`;
 
-      // Up to MAX_WINNERS cheapest offers all win (ties at boundary also win)
-      const cutoffPrice = offers.length > MAX_WINNERS ? offers[MAX_WINNERS - 1].askPrice : Infinity;
-      let epochWins = 0;
+      const demOffers: MarketOffer[] = [];
 
-      for (let i = 0; i < offers.length; i++) {
-        const offer = offers[i];
-        const offerBot = bots[offer.botIdx];
+      for (const bi of botOrder) {
+        // One offer per bot per recipe per epoch
+        if (offeredThisEpoch.get(offerKey(bi))) continue;
 
-        const isWinner = i < MAX_WINNERS || offer.askPrice <= cutoffPrice;
+        const bot = bots[bi];
+        const dishCount = bot.inventory.get(demId) || 0;
+        if (dishCount <= 0) continue;
 
-        if (isWinner) {
-          const payment = offer.askPrice * offer.amount;
-          if (treasury >= payment && spendGas(offerBot, "settle", GAS.settle)) {
-            treasury -= payment;
-            offerBot.balance += payment;
-            offerBot.revenue += payment;
-            offerBot.dishesSold += offer.amount;
-            offerBot.wins++;
-            epochWins++;
-            recipeTotalPaid[demandedRecipeId] += payment;
+        const targets = bot.strategy.targetRecipes[0] === -1 ? RECIPES.map(rec => rec.id) : bot.strategy.targetRecipes;
+        if (!targets.includes(demId)) continue;
 
-            const curInv = offerBot.inventory.get(demandedRecipeId) || 0;
-            offerBot.inventory.set(demandedRecipeId, curInv - offer.amount);
+        let askPrice = seedCost * (bot.strategy.askPricePct / 100);
+        if (askPrice > cap) askPrice = cap;
+
+        if (demOffers.length > 0 && Math.random() < bot.strategy.aggressiveness) {
+          const lowestSoFar = Math.min(...demOffers.map(o => o.askPrice));
+          askPrice = Math.max(lowestSoFar * 0.92, seedCost * 0.8);
+        }
+
+        const amount = Math.min(dishCount, bot.strategy.dishesPerOffer);
+        const totalPayment = askPrice * amount;
+        if (totalPayment > treasury) continue;
+
+        if (!spendGas(bot, "submitOffer", GAS.submitOffer)) continue;
+        demOffers.push({ botIdx: bi, askPrice, amount });
+        offeredThisEpoch.set(offerKey(bi), new Set([bi]));
+      }
+
+      epochTotalOffers += demOffers.length;
+
+      if (demOffers.length > 0) {
+        if (demOffers.length > 1) contestedMinutes++;
+
+        demOffers.sort((a, b) => a.askPrice - b.askPrice);
+        const cutoffPrice = demOffers.length > MAX_WINNERS ? demOffers[MAX_WINNERS - 1].askPrice : Infinity;
+        let demWins = 0;
+
+        for (let i = 0; i < demOffers.length; i++) {
+          const offer = demOffers[i];
+          const offerBot = bots[offer.botIdx];
+          const isWinner = i < MAX_WINNERS || offer.askPrice <= cutoffPrice;
+
+          if (isWinner) {
+            const payment = offer.askPrice * offer.amount;
+            if (treasury >= payment && spendGas(offerBot, "settle", GAS.settle)) {
+              treasury -= payment;
+              offerBot.balance += payment;
+              offerBot.revenue += payment;
+              offerBot.dishesSold += offer.amount;
+              offerBot.wins++;
+              demWins++;
+              epochHasWinner = true;
+              recipeTotalPaid[demId] += payment;
+              const curInv = offerBot.inventory.get(demId) || 0;
+              offerBot.inventory.set(demId, curInv - offer.amount);
+            } else {
+              spendGas(offerBot, "withdrawOffer", GAS.withdrawOffer);
+              offerBot.losses++;
+            }
           } else {
             spendGas(offerBot, "withdrawOffer", GAS.withdrawOffer);
             offerBot.losses++;
           }
-        } else {
-          spendGas(offerBot, "withdrawOffer", GAS.withdrawOffer);
-          offerBot.losses++;
         }
-      }
 
-      if (epochWins > 0) recipeWins[demandedRecipeId]++;
+        if (demWins > 0) recipeWins[demId]++;
+      }
     }
+
+    minuteOfferCounts.push(epochTotalOffers);
+    if (epochTotalOffers === 0) emptyMinutes++;
+    void epochHasWinner; // used for future extension
   }
 
   // ═══════════════════════════════════════════════════════════════════════════

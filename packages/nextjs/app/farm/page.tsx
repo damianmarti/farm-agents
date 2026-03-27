@@ -167,8 +167,8 @@ function DishMarketOfferPanel({
   const { data: alreadyOffered } = useScaffoldReadContract({
     contractName: "DishMarket",
     functionName: "hasOffered",
-    args: [currentMinute ?? 0n, user],
-    query: { enabled: !!userAddr && currentMinute !== undefined },
+    args: [currentMinute ?? 0n, BigInt(recipeId ?? 0), user],
+    query: { enabled: !!userAddr && currentMinute !== undefined && recipeId !== null },
   });
 
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
@@ -266,7 +266,10 @@ function DishMarketOfferPanel({
           <button
             onClick={async () => {
               try {
-                await writeMarket({ functionName: "submitOffer", args: [parseEther(askInput), 1n] });
+                await writeMarket({
+                  functionName: "submitOffer",
+                  args: [BigInt(recipeId ?? 0), parseEther(askInput), 1n],
+                });
               } catch {}
             }}
             disabled={offerPending || !askInput}
@@ -635,12 +638,6 @@ function LandDetailPanel({
 // ── Pending offer row ──────────────────────────────────────────────────────
 
 function PendingOfferRow({ minute, userAddr }: { minute: bigint; userAddr: string }) {
-  const { data: state } = useScaffoldReadContract({
-    contractName: "DishMarket",
-    functionName: "minuteState",
-    args: [minute],
-  });
-
   const { data: offersRaw } = useScaffoldReadContract({
     contractName: "DishMarket",
     functionName: "getOffers",
@@ -651,7 +648,7 @@ function PendingOfferRow({ minute, userAddr }: { minute: bigint; userAddr: strin
     contractName: "DishMarket",
   });
 
-  if (!state || !offersRaw) {
+  if (!offersRaw) {
     return (
       <div className="flex items-center justify-between py-2 text-xs text-base-content/30 animate-pulse">
         <span>Epoch #{minute.toString()}</span>
@@ -660,62 +657,73 @@ function PendingOfferRow({ minute, userAddr }: { minute: bigint; userAddr: strin
     );
   }
 
-  const recipeId = Number(state[0]);
-  const recipe = RECIPE_META[recipeId];
+  type OfferEntry = { seller: string; askPrice: bigint; amount: bigint; recipeId: bigint; claimed: boolean };
+  const offers = offersRaw as unknown as OfferEntry[];
+  const myIdxs = offers.map((o, i) => i).filter(i => offers[i].seller.toLowerCase() === userAddr.toLowerCase());
+  if (myIdxs.length === 0) return null;
 
-  const offers = [...offersRaw] as { seller: string; askPrice: bigint; claimed: boolean }[];
-  const myIdx = offers.findIndex(o => o.seller.toLowerCase() === userAddr.toLowerCase());
-  if (myIdx === -1) return null;
+  const unclaimed = myIdxs.filter(i => !offers[i].claimed);
+  if (unclaimed.length === 0) return null;
 
-  const myOffer = offers[myIdx];
-  if (myOffer.claimed) return null; // already handled
-
-  // Top 3 cheapest offers win — count how many have a strictly lower ask price
   const MAX_WINNERS = 3;
-  const betterCount = offers.filter((o, i) => i !== myIdx && o.askPrice < myOffer.askPrice).length;
-  const isWinner = betterCount < MAX_WINNERS;
 
   return (
-    <div className="flex items-center gap-3 py-2.5 border-b border-base-200 last:border-0">
-      {/* Recipe + epoch */}
-      <div className="flex items-center gap-2 flex-1 min-w-0">
-        <span className="text-xl leading-none">{recipe?.emoji ?? "🍽"}</span>
-        <div className="min-w-0">
-          <p className="text-sm font-semibold leading-tight truncate">{recipe?.name ?? `Recipe #${recipeId}`}</p>
-          <p className="text-xs text-base-content/40 font-mono">epoch #{minute.toString()}</p>
-        </div>
-      </div>
+    <>
+      {unclaimed.map(myIdx => {
+        const myOffer = offers[myIdx];
+        const myRecipeId = Number(myOffer.recipeId);
+        const recipe = RECIPE_META[myRecipeId];
+        const betterCount = offers.filter(
+          (o, i) => i !== myIdx && Number(o.recipeId) === myRecipeId && o.askPrice < myOffer.askPrice,
+        ).length;
+        const isWinner = betterCount < MAX_WINNERS;
 
-      {/* Ask price + rank */}
-      <div className="text-right shrink-0">
-        <p className="text-xs text-base-content/40">Ask</p>
-        <p className="font-mono font-semibold text-sm">{formatEther(myOffer.askPrice)} ETH</p>
-        <p className="text-xs text-base-content/30">rank #{betterCount + 1}</p>
-      </div>
+        return (
+          <div key={myIdx} className="flex items-center gap-3 py-2.5 border-b border-base-200 last:border-0">
+            {/* Recipe + epoch */}
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              <span className="text-xl leading-none">{recipe?.emoji ?? "🍽"}</span>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold leading-tight truncate">
+                  {recipe?.name ?? `Recipe #${myRecipeId}`}
+                </p>
+                <p className="text-xs text-base-content/40 font-mono">epoch #{minute.toString()}</p>
+              </div>
+            </div>
 
-      {/* Status + action */}
-      <div className="shrink-0">
-        {isWinner ? (
-          <button
-            onClick={() => writeMarket({ functionName: "settle", args: [minute, BigInt(myIdx)] })}
-            disabled={isPending}
-            className="btn btn-success btn-sm gap-1"
-          >
-            {isPending ? <span className="loading loading-spinner loading-xs" /> : "💸"}
-            Collect {formatEther(myOffer.askPrice)} ETH
-          </button>
-        ) : (
-          <button
-            onClick={() => writeMarket({ functionName: "withdrawOffer", args: [minute, BigInt(myIdx)] })}
-            disabled={isPending}
-            className="btn btn-ghost btn-sm gap-1 text-base-content/60"
-          >
-            {isPending ? <span className="loading loading-spinner loading-xs" /> : "↩"}
-            Withdraw
-          </button>
-        )}
-      </div>
-    </div>
+            {/* Ask price + rank */}
+            <div className="text-right shrink-0">
+              <p className="text-xs text-base-content/40">Ask</p>
+              <p className="font-mono font-semibold text-sm">{formatEther(myOffer.askPrice)} ETH</p>
+              <p className="text-xs text-base-content/30">rank #{betterCount + 1}</p>
+            </div>
+
+            {/* Status + action */}
+            <div className="shrink-0">
+              {isWinner ? (
+                <button
+                  onClick={() => writeMarket({ functionName: "settle", args: [minute, BigInt(myIdx)] })}
+                  disabled={isPending}
+                  className="btn btn-success btn-sm gap-1"
+                >
+                  {isPending ? <span className="loading loading-spinner loading-xs" /> : "💸"}
+                  Collect {formatEther(myOffer.askPrice)} ETH
+                </button>
+              ) : (
+                <button
+                  onClick={() => writeMarket({ functionName: "withdrawOffer", args: [minute, BigInt(myIdx)] })}
+                  disabled={isPending}
+                  className="btn btn-ghost btn-sm gap-1 text-base-content/60"
+                >
+                  {isPending ? <span className="loading loading-spinner loading-xs" /> : "↩"}
+                  Withdraw
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </>
   );
 }
 
@@ -938,6 +946,10 @@ const FarmPage: NextPage = () => {
     contractName: "DishMarket",
     functionName: "currentDemand",
   });
+  const { data: currentSecondDemandId } = useScaffoldReadContract({
+    contractName: "DishMarket",
+    functionName: "currentSecondDemand",
+  });
   const { data: marketState } = useScaffoldReadContract({
     contractName: "DishMarket",
     functionName: "minuteState",
@@ -998,6 +1010,9 @@ const FarmPage: NextPage = () => {
     currentDemandId !== undefined
       ? (RECIPE_META[Number(currentDemandId)] ?? { name: recipeData?.[0] ?? "—", emoji: "🍽" })
       : null;
+
+  const secondRecipeMeta =
+    currentSecondDemandId !== undefined ? (RECIPE_META[Number(currentSecondDemandId)] ?? null) : null;
 
   const recentSales = settledEvents?.slice(0, 8) ?? [];
 
@@ -1222,23 +1237,38 @@ const FarmPage: NextPage = () => {
               <span className="badge badge-ghost text-xs font-mono">min #{currentMinute?.toString() ?? "—"}</span>
             </div>
 
-            {/* Demanded dish — hero */}
+            {/* Demanded dishes — hero */}
             {recipeMeta ? (
-              <div className="flex items-center gap-4 bg-warning/10 border border-warning/30 rounded-2xl p-4 mb-4">
-                <span className="text-5xl leading-none" aria-hidden="true">
-                  {recipeMeta.emoji}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-base-content/50 uppercase tracking-widest">Demanded now</p>
-                  <p className="font-extrabold text-xl leading-tight">{recipeMeta.name}</p>
-                  {marketState?.[2] && <span className="badge badge-success badge-sm mt-1">✓ Won (top 3)</span>}
+              <div className="flex flex-col gap-2 mb-4">
+                {/* Primary demand */}
+                <div className="flex items-center gap-4 bg-warning/10 border border-warning/30 rounded-2xl p-4">
+                  <span className="text-5xl leading-none" aria-hidden="true">
+                    {recipeMeta.emoji}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-base-content/50 uppercase tracking-widest">Demanded now</p>
+                    <p className="font-extrabold text-xl leading-tight">{recipeMeta.name}</p>
+                    {marketState?.[2] && <span className="badge badge-success badge-sm mt-1">✓ Won (top 3)</span>}
+                  </div>
+                  <div className="text-center shrink-0">
+                    <p className="font-mono text-2xl font-extrabold text-warning tabular-nums">
+                      00:{String(minuteCountdown).padStart(2, "0")}
+                    </p>
+                    <p className="text-xs text-base-content/40">remaining</p>
+                  </div>
                 </div>
-                <div className="text-center shrink-0">
-                  <p className="font-mono text-2xl font-extrabold text-warning tabular-nums">
-                    00:{String(minuteCountdown).padStart(2, "0")}
-                  </p>
-                  <p className="text-xs text-base-content/40">remaining</p>
-                </div>
+                {/* Secondary demand */}
+                {secondRecipeMeta && (
+                  <div className="flex items-center gap-4 bg-secondary/10 border border-secondary/30 rounded-2xl p-4">
+                    <span className="text-5xl leading-none" aria-hidden="true">
+                      {secondRecipeMeta.emoji}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs text-base-content/50 uppercase tracking-widest">Also demanded</p>
+                      <p className="font-extrabold text-xl leading-tight">{secondRecipeMeta.name}</p>
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="h-24 bg-base-200/60 rounded-2xl animate-pulse mb-4" />
@@ -1273,6 +1303,14 @@ const FarmPage: NextPage = () => {
                 recipeId={currentDemandId !== undefined ? Number(currentDemandId) : null}
                 recipeName={recipeMeta.name}
                 recipeEmoji={recipeMeta.emoji}
+                currentMinute={currentMinute}
+              />
+            )}
+            {secondRecipeMeta && (
+              <DishMarketOfferPanel
+                recipeId={currentSecondDemandId !== undefined ? Number(currentSecondDemandId) : null}
+                recipeName={secondRecipeMeta.name}
+                recipeEmoji={secondRecipeMeta.emoji}
                 currentMinute={currentMinute}
               />
             )}

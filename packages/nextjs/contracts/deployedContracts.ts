@@ -61,6 +61,11 @@ const deployedContracts = {
           type: "error",
         },
         {
+          inputs: [],
+          name: "ZeroQuantity",
+          type: "error",
+        },
+        {
           anonymous: false,
           inputs: [
             {
@@ -216,6 +221,30 @@ const deployedContracts = {
               type: "uint256",
             },
           ],
+          name: "cookingQuantity",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "address",
+              name: "",
+              type: "address",
+            },
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
           name: "cookingStartTime",
           outputs: [
             {
@@ -325,6 +354,11 @@ const deployedContracts = {
               name: "recipeId",
               type: "uint256",
             },
+            {
+              internalType: "uint256",
+              name: "quantity",
+              type: "uint256",
+            },
           ],
           name: "startCooking",
           outputs: [],
@@ -395,17 +429,17 @@ const deployedContracts = {
         },
         {
           inputs: [],
-          name: "AlreadySettled",
-          type: "error",
-        },
-        {
-          inputs: [],
           name: "AskPriceExceedsCap",
           type: "error",
         },
         {
           inputs: [],
           name: "AskPriceTooHigh",
+          type: "error",
+        },
+        {
+          inputs: [],
+          name: "EpochNotOver",
           type: "error",
         },
         {
@@ -420,17 +454,17 @@ const deployedContracts = {
         },
         {
           inputs: [],
-          name: "MinuteNotOver",
-          type: "error",
-        },
-        {
-          inputs: [],
           name: "NoOffers",
           type: "error",
         },
         {
           inputs: [],
           name: "NoRecipes",
+          type: "error",
+        },
+        {
+          inputs: [],
+          name: "NotDemandedRecipe",
           type: "error",
         },
         {
@@ -475,27 +509,13 @@ const deployedContracts = {
         },
         {
           inputs: [],
-          name: "ZeroAskPrice",
+          name: "ZeroAmount",
           type: "error",
         },
         {
-          anonymous: false,
-          inputs: [
-            {
-              indexed: true,
-              internalType: "address",
-              name: "funder",
-              type: "address",
-            },
-            {
-              indexed: false,
-              internalType: "uint256",
-              name: "amount",
-              type: "uint256",
-            },
-          ],
-          name: "Funded",
-          type: "event",
+          inputs: [],
+          name: "ZeroAskPrice",
+          type: "error",
         },
         {
           anonymous: false,
@@ -526,6 +546,25 @@ const deployedContracts = {
             },
           ],
           name: "EpochSettled",
+          type: "event",
+        },
+        {
+          anonymous: false,
+          inputs: [
+            {
+              indexed: true,
+              internalType: "address",
+              name: "funder",
+              type: "address",
+            },
+            {
+              indexed: false,
+              internalType: "uint256",
+              name: "amount",
+              type: "uint256",
+            },
+          ],
+          name: "Funded",
           type: "event",
         },
         {
@@ -586,6 +625,32 @@ const deployedContracts = {
         },
         {
           inputs: [],
+          name: "EPOCH_DURATION",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [],
+          name: "MAX_WINNERS",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [],
           name: "availableFunds",
           outputs: [
             {
@@ -625,11 +690,91 @@ const deployedContracts = {
         },
         {
           inputs: [],
+          name: "currentEpoch",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [],
           name: "currentMinute",
           outputs: [
             {
               internalType: "uint256",
               name: "",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [],
+          name: "currentSecondDemand",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          name: "epochState",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "recipeId",
+              type: "uint256",
+            },
+            {
+              internalType: "uint256",
+              name: "secondRecipeId",
+              type: "uint256",
+            },
+            {
+              internalType: "bool",
+              name: "hasOffers",
+              type: "bool",
+            },
+            {
+              internalType: "uint256",
+              name: "settledCount",
+              type: "uint256",
+            },
+            {
+              internalType: "uint256",
+              name: "winnerIndex",
+              type: "uint256",
+            },
+            {
+              internalType: "uint256",
+              name: "winnerAskPrice",
+              type: "uint256",
+            },
+            {
+              internalType: "uint256",
+              name: "secondWinnerIndex",
+              type: "uint256",
+            },
+            {
+              internalType: "uint256",
+              name: "secondWinnerAskPrice",
               type: "uint256",
             },
           ],
@@ -653,7 +798,7 @@ const deployedContracts = {
           inputs: [
             {
               internalType: "uint256",
-              name: "minute",
+              name: "epoch",
               type: "uint256",
             },
           ],
@@ -672,7 +817,26 @@ const deployedContracts = {
           inputs: [
             {
               internalType: "uint256",
-              name: "minute",
+              name: "epoch",
+              type: "uint256",
+            },
+          ],
+          name: "secondDemandForEpoch",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "uint256",
+              name: "epoch",
               type: "uint256",
             },
           ],
@@ -691,6 +855,16 @@ const deployedContracts = {
                   type: "uint256",
                 },
                 {
+                  internalType: "uint256",
+                  name: "amount",
+                  type: "uint256",
+                },
+                {
+                  internalType: "uint256",
+                  name: "recipeId",
+                  type: "uint256",
+                },
+                {
                   internalType: "bool",
                   name: "claimed",
                   type: "bool",
@@ -706,6 +880,11 @@ const deployedContracts = {
         },
         {
           inputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
             {
               internalType: "uint256",
               name: "",
@@ -732,7 +911,7 @@ const deployedContracts = {
           inputs: [
             {
               internalType: "uint256",
-              name: "",
+              name: "epoch",
               type: "uint256",
             },
           ],
@@ -745,7 +924,7 @@ const deployedContracts = {
             },
             {
               internalType: "bool",
-              name: "hasOffers",
+              name: "hasOffers_",
               type: "bool",
             },
             {
@@ -802,6 +981,11 @@ const deployedContracts = {
           inputs: [
             {
               internalType: "uint256",
+              name: "recipeId",
+              type: "uint256",
+            },
+            {
+              internalType: "uint256",
               name: "askPrice",
               type: "uint256",
             },
@@ -833,7 +1017,7 @@ const deployedContracts = {
           inputs: [
             {
               internalType: "uint256",
-              name: "minute",
+              name: "epoch",
               type: "uint256",
             },
             {
@@ -881,11 +1065,6 @@ const deployedContracts = {
         },
         {
           inputs: [],
-          name: "CannotWaterDeadPlant",
-          type: "error",
-        },
-        {
-          inputs: [],
           name: "ConfigAlreadyExists",
           type: "error",
         },
@@ -912,11 +1091,6 @@ const deployedContracts = {
         {
           inputs: [],
           name: "NotReadyToHarvest",
-          type: "error",
-        },
-        {
-          inputs: [],
-          name: "NothingPlanted",
           type: "error",
         },
         {
@@ -978,12 +1152,6 @@ const deployedContracts = {
               indexed: false,
               internalType: "uint256",
               name: "maxCapacity",
-              type: "uint256",
-            },
-            {
-              indexed: false,
-              internalType: "uint256",
-              name: "waterInterval",
               type: "uint256",
             },
             {
@@ -1075,25 +1243,6 @@ const deployedContracts = {
             },
             {
               indexed: true,
-              internalType: "address",
-              name: "waterer",
-              type: "address",
-            },
-          ],
-          name: "LandWatered",
-          type: "event",
-        },
-        {
-          anonymous: false,
-          inputs: [
-            {
-              indexed: true,
-              internalType: "uint256",
-              name: "landId",
-              type: "uint256",
-            },
-            {
-              indexed: true,
               internalType: "uint256",
               name: "seedId",
               type: "uint256",
@@ -1147,11 +1296,6 @@ const deployedContracts = {
             },
             {
               internalType: "uint256",
-              name: "waterInterval",
-              type: "uint256",
-            },
-            {
-              internalType: "uint256",
               name: "maturationTime",
               type: "uint256",
             },
@@ -1200,6 +1344,19 @@ const deployedContracts = {
           type: "function",
         },
         {
+          inputs: [],
+          name: "dishMarket",
+          outputs: [
+            {
+              internalType: "address",
+              name: "",
+              type: "address",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
           inputs: [
             {
               internalType: "uint256",
@@ -1212,11 +1369,6 @@ const deployedContracts = {
             {
               internalType: "uint256",
               name: "maxCapacity",
-              type: "uint256",
-            },
-            {
-              internalType: "uint256",
-              name: "waterInterval",
               type: "uint256",
             },
             {
@@ -1436,11 +1588,6 @@ const deployedContracts = {
               type: "uint256",
             },
             {
-              internalType: "uint256",
-              name: "lastWateredAt",
-              type: "uint256",
-            },
-            {
               internalType: "bool",
               name: "hasPlanting",
               type: "bool",
@@ -1470,12 +1617,12 @@ const deployedContracts = {
         {
           inputs: [
             {
-              internalType: "uint256",
-              name: "landId",
-              type: "uint256",
+              internalType: "address",
+              name: "_dishMarket",
+              type: "address",
             },
           ],
-          name: "water",
+          name: "setDishMarket",
           outputs: [],
           stateMutability: "nonpayable",
           type: "function",
@@ -1538,6 +1685,11 @@ const deployedContracts = {
         {
           inputs: [],
           name: "NothingToWithdraw",
+          type: "error",
+        },
+        {
+          inputs: [],
+          name: "OnlyOwner",
           type: "error",
         },
         {
@@ -1730,6 +1882,19 @@ const deployedContracts = {
         },
         {
           inputs: [],
+          name: "dishMarket",
+          outputs: [
+            {
+              internalType: "address",
+              name: "",
+              type: "address",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [],
           name: "highestBid",
           outputs: [
             {
@@ -1803,6 +1968,19 @@ const deployedContracts = {
             },
           ],
           stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "address",
+              name: "_dishMarket",
+              type: "address",
+            },
+          ],
+          name: "setDishMarket",
+          outputs: [],
+          stateMutability: "nonpayable",
           type: "function",
         },
         {
@@ -2031,6 +2209,19 @@ const deployedContracts = {
         },
         {
           inputs: [],
+          name: "dishMarket",
+          outputs: [
+            {
+              internalType: "address",
+              name: "",
+              type: "address",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [],
           name: "owner",
           outputs: [
             {
@@ -2120,6 +2311,19 @@ const deployedContracts = {
             },
           ],
           stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "address",
+              name: "_dishMarket",
+              type: "address",
+            },
+          ],
+          name: "setDishMarket",
+          outputs: [],
+          stateMutability: "nonpayable",
           type: "function",
         },
         {

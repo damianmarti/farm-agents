@@ -504,7 +504,7 @@ function CookPanel({ recipe }: { recipe: RecipeInfo }) {
       {canCook && (
         <button
           onClick={async () => {
-            await writeChef({ functionName: "startCooking", args: [BigInt(recipe.id)] });
+            await writeChef({ functionName: "startCooking", args: [BigInt(recipe.id), 1n] });
             refetchCooking();
           }}
           disabled={chefPending}
@@ -562,7 +562,7 @@ function OfferPanel({
   const { data: alreadyOffered } = useScaffoldReadContract({
     contractName: "DishMarket",
     functionName: "hasOffered",
-    args: [currentMinute ?? 0n, user],
+    args: [currentMinute ?? 0n, BigInt(recipeId), user],
     query: { enabled: !!userAddr && currentMinute !== undefined },
   });
 
@@ -657,7 +657,7 @@ function OfferPanel({
           <button
             onClick={async () => {
               try {
-                await writeMarket({ functionName: "submitOffer", args: [parseEther(askInput), 1n] });
+                await writeMarket({ functionName: "submitOffer", args: [BigInt(recipeId), parseEther(askInput), 1n] });
               } catch {}
             }}
             disabled={offerPending || !askInput}
@@ -679,10 +679,12 @@ function OfferPanel({
 function RecipeCard({
   recipe,
   isLive,
+  isSecondary,
   currentMinute,
 }: {
   recipe: RecipeInfo;
   isLive: boolean;
+  isSecondary?: boolean;
   currentMinute: number | null;
 }) {
   const { data: recipeData } = useScaffoldReadContract({
@@ -703,7 +705,11 @@ function RecipeCard({
     <div
       className={[
         "card bg-base-100 flex flex-col overflow-hidden transition-shadow",
-        isLive ? "border-2 border-warning shadow-md" : "border border-base-200 shadow-sm",
+        isLive
+          ? "border-2 border-warning shadow-md"
+          : isSecondary
+            ? "border-2 border-secondary shadow-md"
+            : "border border-base-200 shadow-sm",
       ].join(" ")}
     >
       {/* Live strip */}
@@ -711,6 +717,12 @@ function RecipeCard({
         <div className="bg-warning text-warning-content text-xs font-bold uppercase tracking-widest text-center py-1.5 flex items-center justify-center gap-1.5">
           <span className="w-1.5 h-1.5 rounded-full bg-warning-content animate-ping inline-block" />
           Demanded right now
+        </div>
+      )}
+      {isSecondary && !isLive && (
+        <div className="bg-secondary text-secondary-content text-xs font-bold uppercase tracking-widest text-center py-1.5 flex items-center justify-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-secondary-content animate-ping inline-block" />
+          Also demanded now
         </div>
       )}
 
@@ -811,6 +823,11 @@ const DishesPage: NextPage = () => {
     functionName: "currentDemand",
   });
 
+  const { data: currentSecondDemandId } = useScaffoldReadContract({
+    contractName: "DishMarket",
+    functionName: "currentSecondDemand",
+  });
+
   const { data: currentMinute } = useScaffoldReadContract({
     contractName: "DishMarket",
     functionName: "currentMinute",
@@ -824,7 +841,10 @@ const DishesPage: NextPage = () => {
   const liveId = currentDemandId !== undefined ? Number(currentDemandId) : null;
   const liveRecipe = liveId !== null ? RECIPES[liveId] : null;
 
-  // Next 3 upcoming dishes
+  const secondLiveId = currentSecondDemandId !== undefined ? Number(currentSecondDemandId) : null;
+  const secondLiveRecipe = secondLiveId !== null ? RECIPES[secondLiveId] : null;
+
+  // Next 3 upcoming dishes (based on primary deterministic cycle)
   const upNext = liveId !== null ? [1, 2, 3].map(offset => RECIPES[(liveId + offset) % RECIPES.length]) : [];
 
   const treasuryFmt = availableFunds !== undefined ? Number(formatEther(availableFunds)).toFixed(4) : null;
@@ -903,6 +923,30 @@ const DishesPage: NextPage = () => {
         </div>
       )}
 
+      {/* ── Secondary demand banner ── */}
+      {secondLiveRecipe && (
+        <div className="bg-secondary/10 border border-secondary/30 rounded-2xl overflow-hidden">
+          <div className="flex items-center gap-5 px-5 py-4">
+            <div className="w-16 h-16 rounded-2xl bg-secondary/20 flex items-center justify-center text-4xl shrink-0 shadow-sm">
+              {secondLiveRecipe.emoji}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs text-base-content/50 uppercase tracking-widest">Also demanded this epoch</p>
+              <p className="font-extrabold text-2xl leading-tight">{secondLiveRecipe.name}</p>
+              <p className="text-xs text-base-content/40 font-mono mt-0.5">
+                min #{currentMinute?.toString() ?? "—"} · pseudo-random demand
+              </p>
+            </div>
+          </div>
+          <OfferPanel
+            recipeId={secondLiveRecipe.id}
+            recipeName={secondLiveRecipe.name}
+            recipeEmoji={secondLiveRecipe.emoji}
+            currentMinute={currentMinute}
+          />
+        </div>
+      )}
+
       {/* ── Recipe grid ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         {RECIPES.map(recipe => (
@@ -910,6 +954,7 @@ const DishesPage: NextPage = () => {
             key={recipe.id}
             recipe={recipe}
             isLive={recipe.id === liveId}
+            isSecondary={recipe.id === secondLiveId}
             currentMinute={currentMinute !== undefined ? Number(currentMinute) : null}
           />
         ))}

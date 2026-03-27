@@ -168,14 +168,25 @@ async function ensureApproved(tokenAddr: string, spender: string, signer: Signer
 
 // ─── Demand planning ──────────────────────────────────────────────────────────
 
-/** Returns the sequence of recipe demands within the lookahead window, soonest first. */
+/** Compute the secondary (pseudo-random) demanded recipe for an epoch — mirrors DishMarket._secondDemandForEpoch. */
+function computeSecondDemand(epoch: bigint, primaryId: number, count: number): number {
+  const hash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(["string", "uint256"], ["dish2", epoch]));
+  let raw = Number(BigInt(hash) % BigInt(count));
+  if (raw === primaryId) raw = (raw + 1) % count;
+  return raw;
+}
+
+/** Returns the sequence of recipe demands within the lookahead window (both primary + secondary), soonest first. */
 function upcomingDemands(currentMinute: bigint): { recipeId: number; minutesUntil: number }[] {
   const result: { recipeId: number; minutesUntil: number }[] = [];
   for (let i = 0; i <= LOOKAHEAD_MINUTES; i++) {
-    result.push({
-      recipeId: Number((currentMinute + BigInt(i)) % BigInt(RECIPE_COUNT)),
-      minutesUntil: i,
-    });
+    const epoch = currentMinute + BigInt(i);
+    const primaryId = Number(epoch % BigInt(RECIPE_COUNT));
+    const secondaryId = computeSecondDemand(epoch, primaryId, RECIPE_COUNT);
+    result.push({ recipeId: primaryId, minutesUntil: i });
+    if (secondaryId !== primaryId) {
+      result.push({ recipeId: secondaryId, minutesUntil: i });
+    }
   }
   return result;
 }
@@ -405,78 +416,95 @@ async function manageMarket(
   const currentMin: bigint = await dishMarket.currentMinute();
 
   // ── Settle / withdraw past offers ────────────────────────────────────────
+  const MAX_WINNERS = 3;
   for (const pastMin of [...pendingOfferMinutes]) {
     if (pastMin >= currentMin) continue;
 
     const offers = await dishMarket.getOffers(pastMin);
-    const myIdx = offers.findIndex(o => o.seller.toLowerCase() === botAddr.toLowerCase());
-    if (myIdx === -1 || offers[myIdx].claimed) {
+    const myIdxs = offers
+      .map((o, i) => i)
+      .filter(i => offers[i].seller.toLowerCase() === botAddr.toLowerCase() && !offers[i].claimed);
+
+    if (myIdxs.length === 0) {
       pendingOfferMinutes.delete(pastMin);
       continue;
     }
 
-    // Determine winner eligibility: count offers with strictly lower ask price
-    const myAsk = offers[myIdx].askPrice;
-    const betterCount = offers.filter((o, i) => i !== myIdx && o.askPrice < myAsk).length;
-    const MAX_WINNERS = 3;
-    const amWinner = betterCount < MAX_WINNERS;
+    for (const myIdx of myIdxs) {
+      const myAsk = offers[myIdx].askPrice;
+      const myRecipeId = offers[myIdx].recipeId;
+      const betterCount = offers.filter(
+        (o, i) => i !== myIdx && o.recipeId === myRecipeId && o.askPrice < myAsk,
+      ).length;
+      const amWinner = betterCount < MAX_WINNERS;
 
-    if (amWinner) {
-      await tryTx(`settle market epoch #${pastMin}`, () => dishMarket.settle(pastMin, myIdx, { gasLimit: 200_000 }));
-    } else {
-      await tryTx(`withdraw losing offer epoch #${pastMin}`, () =>
-        dishMarket.withdrawOffer(pastMin, myIdx, { gasLimit: 100_000 }),
-      );
+      if (amWinner) {
+        await tryTx(`settle market epoch #${pastMin} recipe #${myRecipeId}`, () =>
+          dishMarket.settle(pastMin, myIdx, { gasLimit: 200_000 }),
+        );
+      } else {
+        await tryTx(`withdraw losing offer epoch #${pastMin} recipe #${myRecipeId}`, () =>
+          dishMarket.withdrawOffer(pastMin, myIdx, { gasLimit: 100_000 }),
+        );
+      }
     }
 
     pendingOfferMinutes.delete(pastMin);
   }
 
-  // ── Submit offer if we hold the currently demanded dish ──────────────────
-  const demandedRecipeId: bigint = await dishMarket.currentDemand();
-  const alreadyOffered: boolean = await dishMarket.hasOffered(currentMin, botAddr);
-  if (alreadyOffered) {
-    log(`  📈 Offer already submitted for minute #${currentMin}`);
-    return;
-  }
-
-  const recipeInfo = await chef.getRecipe(demandedRecipeId);
-  const demandedName: string = recipeInfo[0];
-  const dishTokenAddr: string = recipeInfo[3];
-  const dishToken = await hre.ethers.getContractAt("ERC20", dishTokenAddr, signer);
-  const dishBal: bigint = await dishToken.balanceOf(botAddr);
-  if (dishBal === 0n) {
-    log(`  📈 Market demands ${demandedName} — no dish tokens yet`);
-    return;
-  }
-
+  // ── Submit offer for both demanded dishes ────────────────────────────────
   const availableFunds: bigint = await dishMarket.availableFunds();
   if (availableFunds === 0n) {
     log("  ⚠️  DishMarket treasury is empty");
     return;
   }
 
-  // Compute ask price = ASK_PRICE_PCT% of the seed cost to produce one dish
-  const ingredients = await chef.getIngredients(demandedRecipeId);
-  let seedCost = 0n;
-  for (const ing of ingredients) {
-    const seedId: bigint = await farmManager.fruitToSeedId(ing.token);
-    const yld: bigint = await farmManager.harvestYield(seedId);
-    const seedsNeeded = (ing.amount + yld - 1n) / yld; // ceiling division
-    seedCost += (await seedShop.seedPrice(seedId)) * seedsNeeded;
+  const primaryId: bigint = await dishMarket.currentDemand();
+  const secondId: bigint = await dishMarket.currentSecondDemand();
+  const demandedIds = [primaryId, secondId].filter((v, i, arr) => arr.indexOf(v) === i); // deduplicate
+
+  let submittedAny = false;
+  for (const demandedRecipeId of demandedIds) {
+    const alreadyOffered: boolean = await dishMarket.hasOffered(currentMin, demandedRecipeId, botAddr);
+    if (alreadyOffered) {
+      log(`  📈 Offer already submitted for epoch #${currentMin} recipe #${demandedRecipeId}`);
+      continue;
+    }
+
+    const recipeInfo = await chef.getRecipe(demandedRecipeId);
+    const demandedName: string = recipeInfo[0];
+    const dishTokenAddr: string = recipeInfo[3];
+    const dishToken = await hre.ethers.getContractAt("ERC20", dishTokenAddr, signer);
+    const dishBal: bigint = await dishToken.balanceOf(botAddr);
+    if (dishBal === 0n) {
+      log(`  📈 Market demands ${demandedName} — no dish tokens yet`);
+      continue;
+    }
+
+    // Compute ask price = ASK_PRICE_PCT% of the seed cost to produce one dish
+    const ingredients = await chef.getIngredients(demandedRecipeId);
+    let seedCost = 0n;
+    for (const ing of ingredients) {
+      const seedId: bigint = await farmManager.fruitToSeedId(ing.token);
+      const yld: bigint = await farmManager.harvestYield(seedId);
+      const seedsNeeded = (ing.amount + yld - 1n) / yld; // ceiling division
+      seedCost += (await seedShop.seedPrice(seedId)) * seedsNeeded;
+    }
+
+    let askPrice = (seedCost * ASK_PRICE_PCT) / 100n;
+    if (askPrice === 0n) askPrice = 1n;
+    if (askPrice > availableFunds) askPrice = availableFunds;
+
+    await ensureApproved(dishTokenAddr, dishMarketAddr, signer);
+
+    const ok = await tryTx(
+      `submit offer ${ethers.formatEther(askPrice)} ETH for ${demandedName} (epoch #${currentMin})`,
+      () => dishMarket.submitOffer(demandedRecipeId, askPrice, 1, { gasLimit: 600_000 }),
+    );
+    if (ok) submittedAny = true;
   }
 
-  let askPrice = (seedCost * ASK_PRICE_PCT) / 100n;
-  if (askPrice === 0n) askPrice = 1n;
-  if (askPrice > availableFunds) askPrice = availableFunds;
-
-  await ensureApproved(dishTokenAddr, dishMarketAddr, signer);
-
-  const ok = await tryTx(
-    `submit offer ${ethers.formatEther(askPrice)} ETH for ${demandedName} (minute #${currentMin})`,
-    () => dishMarket.submitOffer(askPrice, 1, { gasLimit: 600_000 }),
-  );
-  if (ok) pendingOfferMinutes.add(currentMin);
+  if (submittedAny) pendingOfferMinutes.add(currentMin);
 }
 
 // ─── Main loop ────────────────────────────────────────────────────────────────
