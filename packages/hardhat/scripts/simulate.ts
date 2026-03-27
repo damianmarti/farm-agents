@@ -576,7 +576,7 @@ function simulate(): void {
 
     // ─── Market — run for both demanded recipes per epoch ───────────────
     type MarketOffer = { botIdx: number; askPrice: number; amount: number };
-    const MAX_WINNERS = 3;
+    const MAX_WINNERS = 5;
 
     let epochTotalOffers = 0;
     let epochHasWinner = false;

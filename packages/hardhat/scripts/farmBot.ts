@@ -389,24 +389,27 @@ async function manageCooking(chef: Chef, dishMarket: DishMarket, botAddr: string
     const dishToken = await hre.ethers.getContractAt("ERC20", dishTokenAddr, signer);
     if ((await dishToken.balanceOf(botAddr)) > 0n) continue;
 
-    // Check if we have all fruit-token ingredients
+    // Compute max batch qty from ingredient balances
     const ingredients = await chef.getIngredients(recipeId);
-    let canCook = true;
+    let maxQty = BigInt(10); // upper cap to avoid over-cooking
     for (const ing of ingredients) {
       const fruitToken = await hre.ethers.getContractAt("ERC20", ing.token, signer);
-      if ((await fruitToken.balanceOf(botAddr)) < ing.amount) {
-        canCook = false;
+      const bal: bigint = await fruitToken.balanceOf(botAddr);
+      const possible = bal / ing.amount; // floor division
+      if (possible === 0n) {
+        maxQty = 0n;
         break;
       }
+      if (possible < maxQty) maxQty = possible;
     }
-    if (!canCook) continue;
+    if (maxQty === 0n) continue;
 
     // Approve all ingredient tokens and start cooking
     for (const ing of ingredients) {
       await ensureApproved(ing.token, chefAddr, signer);
     }
-    await tryTx(`start cooking ${recipeName} (recipe #${recipeId}, demand in ${minutesUntil}m)`, () =>
-      chef.startCooking(recipeId, 1, { gasLimit: 600_000 }),
+    await tryTx(`start cooking ${recipeName} ×${maxQty} (recipe #${recipeId}, demand in ${minutesUntil}m)`, () =>
+      chef.startCooking(recipeId, maxQty, { gasLimit: 600_000 }),
     );
   }
 }
@@ -425,7 +428,7 @@ async function manageMarket(
   const currentMin: bigint = await dishMarket.currentMinute();
 
   // ── Settle / withdraw past offers ────────────────────────────────────────
-  const MAX_WINNERS = 3;
+  const MAX_WINNERS = 5;
   for (const pastMin of [...pendingOfferMinutes]) {
     if (pastMin >= currentMin) continue;
 

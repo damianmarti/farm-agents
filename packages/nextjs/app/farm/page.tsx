@@ -665,7 +665,7 @@ function PendingOfferRow({ minute, userAddr }: { minute: bigint; userAddr: strin
   const unclaimed = myIdxs.filter(i => !offers[i].claimed);
   if (unclaimed.length === 0) return null;
 
-  const MAX_WINNERS = 3;
+  const MAX_WINNERS = 5;
 
   return (
     <>

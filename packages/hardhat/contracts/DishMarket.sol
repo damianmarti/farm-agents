@@ -29,7 +29,7 @@ import { SeedShop } from "./SeedShop.sol";
  */
 contract DishMarket is ReentrancyGuard {
     uint256 public constant EPOCH_DURATION = 10; // seconds per demand epoch
-    uint256 public constant MAX_WINNERS = 3;      // top-N cheapest offers win per recipe per epoch
+    uint256 public constant MAX_WINNERS = 5;      // top-N cheapest offers win per recipe per epoch
 
     address public immutable owner;
     Chef public immutable chef;
