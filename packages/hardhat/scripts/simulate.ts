@@ -76,13 +76,14 @@ const SEEDS = [
 ];
 
 type Ingredient = { seedId: number; amount: number };
-type Recipe = { id: number; name: string; prepTime: number; ingredients: Ingredient[] };
+type Recipe = { id: number; name: string; prepTime: number; dishAmount: number; ingredients: Ingredient[] };
 
 const RECIPES: Recipe[] = [
   {
     id: 0,
     name: "Tomato Soup",
     prepTime: 180,
+    dishAmount: 2,
     ingredients: [
       { seedId: 0, amount: 3 },
       { seedId: 4, amount: 1 },
@@ -92,17 +93,19 @@ const RECIPES: Recipe[] = [
     id: 1,
     name: "Green Salad",
     prepTime: 120,
+    dishAmount: 2,
     ingredients: [
       { seedId: 1, amount: 2 },
       { seedId: 6, amount: 1 },
       { seedId: 7, amount: 1 },
     ],
   },
-  { id: 2, name: "Lemonade", prepTime: 60, ingredients: [{ seedId: 15, amount: 3 }] },
+  { id: 2, name: "Lemonade", prepTime: 60, dishAmount: 3, ingredients: [{ seedId: 15, amount: 3 }] },
   {
     id: 3,
     name: "Carrot Cake",
     prepTime: 300,
+    dishAmount: 2,
     ingredients: [
       { seedId: 2, amount: 3 },
       { seedId: 15, amount: 2 },
@@ -112,16 +115,18 @@ const RECIPES: Recipe[] = [
     id: 4,
     name: "Pumpkin Pie",
     prepTime: 420,
+    dishAmount: 2,
     ingredients: [
       { seedId: 8, amount: 2 },
       { seedId: 3, amount: 1 },
     ],
   },
-  { id: 5, name: "Mango Juice", prepTime: 120, ingredients: [{ seedId: 13, amount: 3 }] },
+  { id: 5, name: "Mango Juice", prepTime: 120, dishAmount: 3, ingredients: [{ seedId: 13, amount: 3 }] },
   {
     id: 6,
     name: "Watermelon Smoothie",
     prepTime: 120,
+    dishAmount: 2,
     ingredients: [
       { seedId: 11, amount: 2 },
       { seedId: 15, amount: 1 },
@@ -131,6 +136,7 @@ const RECIPES: Recipe[] = [
     id: 7,
     name: "Fruit Salad",
     prepTime: 180,
+    dishAmount: 2,
     ingredients: [
       { seedId: 10, amount: 2 },
       { seedId: 12, amount: 2 },
@@ -141,6 +147,7 @@ const RECIPES: Recipe[] = [
     id: 8,
     name: "Pineapple Sorbet",
     prepTime: 240,
+    dishAmount: 2,
     ingredients: [
       { seedId: 14, amount: 2 },
       { seedId: 18, amount: 2 },
@@ -150,6 +157,7 @@ const RECIPES: Recipe[] = [
     id: 9,
     name: "Mixed Pickle",
     prepTime: 240,
+    dishAmount: 3,
     ingredients: [
       { seedId: 2, amount: 2 },
       { seedId: 6, amount: 2 },
@@ -175,7 +183,7 @@ function recipeSeedCost(recipe: Recipe): number {
 
 function recipePriceCap(recipe: Recipe): number {
   const len = recipe.ingredients.length;
-  const multiplier = len >= 4 ? 30 : len >= 3 ? 25 : 20;
+  const multiplier = len >= 4 ? 30 : 20;
   return recipeSeedCost(recipe) * multiplier;
 }
 
@@ -307,30 +315,6 @@ function generateStrategies(): BotStrategy[] {
     });
   }
 
-  // ── Archetype 8: Trio Chefs (4 bots) — target 3-ingredient recipes (25× cap) ──
-  // Green Salad (#1): Lettuce+Cucumber+Spinach
-  // Carrot Cake (#3): Carrot+Lemon (only 2 ing — but listed for completeness)
-  // Fruit Salad (#7): Strawberry+Blueberry+Grape
-  const trioRecipes = [
-    { recipes: [1], label: "Salad" }, // Green Salad: 3 ingredients
-    { recipes: [7], label: "FruitSalad" }, // Fruit Salad: 3 ingredients
-    { recipes: [1, 7], label: "Both3ing" }, // Both 3-ingredient recipes
-    { recipes: [1, 7], label: "Both3ing" },
-  ];
-  for (let i = 0; i < 4; i++) {
-    strats.push({
-      name: `TrioChef-${++idx}`,
-      archetype: "Trio Chef",
-      lands: 3 + i,
-      batchSize: 5 + i * 3,
-      askPricePct: 500 + i * 300, // 500%, 800%, 1100%, 1400% — exploit 25× cap
-      dishesPerOffer: 2 + i,
-      targetRecipes: trioRecipes[i].recipes,
-      aggressiveness: 0.3 + i * 0.1,
-      conservatism: 0.3,
-    });
-  }
-
   return strats;
 }
 
@@ -402,8 +386,8 @@ const INITIAL_BOT_BALANCE = 1.0;
 
 function simulate(): void {
   console.log("=".repeat(90));
-  console.log("  FARM GAME SIMULATION — 30 BOTS, 48 HOURS, NO WATERING");
-  console.log("  Seed prices halved, price cap 20×, 10-second demand epochs");
+  console.log("  FARM GAME SIMULATION — 32 BOTS, 48 HOURS, NO WATERING");
+  console.log("  Seed prices halved, price cap 20×/30×, 10s epochs, tiered dishAmount (2-3)");
   console.log("=".repeat(90));
   console.log(
     `Gas: ${GAS_PRICE_GWEI} gwei | Epoch: ${EPOCH_DURATION}s | Treasury seed: ${INITIAL_TREASURY} ETH | Start balance: ${INITIAL_BOT_BALANCE} ETH`,
@@ -530,13 +514,14 @@ function simulate(): void {
       for (const rid of targets) {
         const r = RECIPES[rid];
 
-        // Claim finished dishes
+        // Claim finished dishes (qty batches × dishAmount per batch)
         const readyAt = bot.cookingUntil.get(rid);
         if (readyAt !== undefined && t >= readyAt) {
           if (spendGas(bot, "claim", GAS.claim)) {
             const qty = bot.cookingQty.get(rid) || 1;
-            bot.inventory.set(rid, (bot.inventory.get(rid) || 0) + qty);
-            bot.dishesCooked += qty;
+            const dishes = qty * r.dishAmount;
+            bot.inventory.set(rid, (bot.inventory.get(rid) || 0) + dishes);
+            bot.dishesCooked += dishes;
             bot.cookingUntil.delete(rid);
             bot.cookingQty.delete(rid);
           }
@@ -605,34 +590,50 @@ function simulate(): void {
 
     minuteOfferCounts.push(offers.length);
 
+    const MAX_WINNERS = 3;
+
     if (offers.length === 0) {
       emptyMinutes++;
     } else {
       if (offers.length > 1) contestedMinutes++;
 
+      // Sort by ask price ascending — cheapest offers win
       offers.sort((a, b) => a.askPrice - b.askPrice);
-      const winner = offers[0];
-      const winnerBot = bots[winner.botIdx];
-      const payment = winner.askPrice * winner.amount;
 
-      if (treasury >= payment && spendGas(winnerBot, "settle", GAS.settle)) {
-        treasury -= payment;
-        winnerBot.balance += payment;
-        winnerBot.revenue += payment;
-        winnerBot.dishesSold += winner.amount;
-        winnerBot.wins++;
-        recipeWins[demandedRecipeId]++;
-        recipeTotalPaid[demandedRecipeId] += payment;
+      // Up to MAX_WINNERS cheapest offers all win (ties at boundary also win)
+      const cutoffPrice = offers.length > MAX_WINNERS ? offers[MAX_WINNERS - 1].askPrice : Infinity;
+      let epochWins = 0;
 
-        const curInv = winnerBot.inventory.get(demandedRecipeId) || 0;
-        winnerBot.inventory.set(demandedRecipeId, curInv - winner.amount);
+      for (let i = 0; i < offers.length; i++) {
+        const offer = offers[i];
+        const offerBot = bots[offer.botIdx];
+
+        const isWinner = i < MAX_WINNERS || offer.askPrice <= cutoffPrice;
+
+        if (isWinner) {
+          const payment = offer.askPrice * offer.amount;
+          if (treasury >= payment && spendGas(offerBot, "settle", GAS.settle)) {
+            treasury -= payment;
+            offerBot.balance += payment;
+            offerBot.revenue += payment;
+            offerBot.dishesSold += offer.amount;
+            offerBot.wins++;
+            epochWins++;
+            recipeTotalPaid[demandedRecipeId] += payment;
+
+            const curInv = offerBot.inventory.get(demandedRecipeId) || 0;
+            offerBot.inventory.set(demandedRecipeId, curInv - offer.amount);
+          } else {
+            spendGas(offerBot, "withdrawOffer", GAS.withdrawOffer);
+            offerBot.losses++;
+          }
+        } else {
+          spendGas(offerBot, "withdrawOffer", GAS.withdrawOffer);
+          offerBot.losses++;
+        }
       }
 
-      for (let i = 1; i < offers.length; i++) {
-        const loser = bots[offers[i].botIdx];
-        spendGas(loser, "withdrawOffer", GAS.withdrawOffer);
-        loser.losses++;
-      }
+      if (epochWins > 0) recipeWins[demandedRecipeId]++;
     }
   }
 
@@ -641,7 +642,7 @@ function simulate(): void {
   // ═══════════════════════════════════════════════════════════════════════════
 
   console.log("=".repeat(90));
-  console.log("  RESULTS AFTER 48 HOURS — 30 BOTS");
+  console.log("  RESULTS AFTER 48 HOURS — 32 BOTS");
   console.log("=".repeat(90));
   console.log("");
 

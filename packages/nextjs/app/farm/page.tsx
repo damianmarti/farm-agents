@@ -266,7 +266,7 @@ function DishMarketOfferPanel({
           <button
             onClick={async () => {
               try {
-                await writeMarket({ functionName: "submitOffer", args: [parseEther(askInput)] });
+                await writeMarket({ functionName: "submitOffer", args: [parseEther(askInput), 1n] });
               } catch {}
             }}
             disabled={offerPending || !askInput}
@@ -278,7 +278,7 @@ function DishMarketOfferPanel({
         </div>
       )}
 
-      <p className="text-xs text-base-content/30">Precio máx: 2× coste de semillas · gana la oferta más baja</p>
+      <p className="text-xs text-base-content/30">Cap: 20-30× seed cost · top 3 cheapest offers per epoch win</p>
     </div>
   );
 }
@@ -654,16 +654,12 @@ function PendingOfferRow({ minute, userAddr }: { minute: bigint; userAddr: strin
   if (!state || !offersRaw) {
     return (
       <div className="flex items-center justify-between py-2 text-xs text-base-content/30 animate-pulse">
-        <span>Minute #{minute.toString()}</span>
+        <span>Epoch #{minute.toString()}</span>
         <span>loading…</span>
       </div>
     );
   }
 
-  const hasOffers = state[1] as boolean;
-  const settled = state[2] as boolean;
-  const winnerIndex = Number(state[3]);
-  const winnerAskPrice = state[4] as bigint;
   const recipeId = Number(state[0]);
   const recipe = RECIPE_META[recipeId];
 
@@ -674,37 +670,39 @@ function PendingOfferRow({ minute, userAddr }: { minute: bigint; userAddr: strin
   const myOffer = offers[myIdx];
   if (myOffer.claimed) return null; // already handled
 
-  const isWinner = hasOffers && myIdx === winnerIndex;
+  // Top 3 cheapest offers win — count how many have a strictly lower ask price
+  const MAX_WINNERS = 3;
+  const betterCount = offers.filter((o, i) => i !== myIdx && o.askPrice < myOffer.askPrice).length;
+  const isWinner = betterCount < MAX_WINNERS;
 
   return (
     <div className="flex items-center gap-3 py-2.5 border-b border-base-200 last:border-0">
-      {/* Recipe + minute */}
+      {/* Recipe + epoch */}
       <div className="flex items-center gap-2 flex-1 min-w-0">
         <span className="text-xl leading-none">{recipe?.emoji ?? "🍽"}</span>
         <div className="min-w-0">
           <p className="text-sm font-semibold leading-tight truncate">{recipe?.name ?? `Recipe #${recipeId}`}</p>
-          <p className="text-xs text-base-content/40 font-mono">min #{minute.toString()}</p>
+          <p className="text-xs text-base-content/40 font-mono">epoch #{minute.toString()}</p>
         </div>
       </div>
 
-      {/* Ask price */}
+      {/* Ask price + rank */}
       <div className="text-right shrink-0">
         <p className="text-xs text-base-content/40">Ask</p>
         <p className="font-mono font-semibold text-sm">{formatEther(myOffer.askPrice)} ETH</p>
+        <p className="text-xs text-base-content/30">rank #{betterCount + 1}</p>
       </div>
 
       {/* Status + action */}
       <div className="shrink-0">
-        {settled ? (
-          <span className="badge badge-ghost badge-sm text-base-content/30">Settled</span>
-        ) : isWinner ? (
+        {isWinner ? (
           <button
-            onClick={() => writeMarket({ functionName: "settle", args: [minute] })}
+            onClick={() => writeMarket({ functionName: "settle", args: [minute, BigInt(myIdx)] })}
             disabled={isPending}
             className="btn btn-success btn-sm gap-1"
           >
             {isPending ? <span className="loading loading-spinner loading-xs" /> : "💸"}
-            Cobrar {formatEther(winnerAskPrice)} ETH
+            Collect {formatEther(myOffer.askPrice)} ETH
           </button>
         ) : (
           <button
@@ -713,7 +711,7 @@ function PendingOfferRow({ minute, userAddr }: { minute: bigint; userAddr: strin
             className="btn btn-ghost btn-sm gap-1 text-base-content/60"
           >
             {isPending ? <span className="loading loading-spinner loading-xs" /> : "↩"}
-            Recuperar
+            Withdraw
           </button>
         )}
       </div>
@@ -965,7 +963,7 @@ const FarmPage: NextPage = () => {
   // ── Events ────────────────────────────────────────────────────────────────
   const { data: settledEvents } = useScaffoldEventHistory({
     contractName: "DishMarket",
-    eventName: "MinuteSettled",
+    eventName: "EpochSettled",
     fromBlock: 0n,
     watch: true,
   });
@@ -1009,8 +1007,8 @@ const FarmPage: NextPage = () => {
         ...new Map(
           (offerSubmittedEvents ?? [])
             .filter(ev => ev.args.seller?.toLowerCase() === connectedAddr.toLowerCase())
-            .filter(ev => ev.args.minute !== undefined && ev.args.minute < (currentMinute ?? 0n))
-            .map(ev => [ev.args.minute!.toString(), ev.args.minute!] as [string, bigint]),
+            .filter(ev => ev.args.epoch !== undefined && ev.args.epoch < (currentMinute ?? 0n))
+            .map(ev => [ev.args.epoch!.toString(), ev.args.epoch!] as [string, bigint]),
         ).values(),
       ].sort((a, b) => Number(b - a))
     : [];
@@ -1233,7 +1231,7 @@ const FarmPage: NextPage = () => {
                 <div className="flex-1 min-w-0">
                   <p className="text-xs text-base-content/50 uppercase tracking-widest">Demanded now</p>
                   <p className="font-extrabold text-xl leading-tight">{recipeMeta.name}</p>
-                  {marketState?.[2] && <span className="badge badge-success badge-sm mt-1">✓ Settled</span>}
+                  {marketState?.[2] && <span className="badge badge-success badge-sm mt-1">✓ Won (top 3)</span>}
                 </div>
                 <div className="text-center shrink-0">
                   <p className="font-mono text-2xl font-extrabold text-warning tabular-nums">
@@ -1253,7 +1251,7 @@ const FarmPage: NextPage = () => {
                 <p className="font-extrabold text-lg">{offerCount}</p>
               </div>
               <div className="bg-base-200/70 rounded-xl p-3">
-                <p className="text-xs text-base-content/40 mb-0.5">Lowest ask</p>
+                <p className="text-xs text-base-content/40 mb-0.5">Best ask · top 3 win</p>
                 <p
                   className={`font-extrabold text-lg font-mono ${
                     minOffer !== null ? "text-success" : "text-base-content/30"
@@ -1321,7 +1319,7 @@ const FarmPage: NextPage = () => {
             <table className="table table-sm w-full">
               <thead className="bg-base-200/80 text-base-content/50 text-xs uppercase tracking-widest">
                 <tr>
-                  <th>Minute</th>
+                  <th>Epoch</th>
                   <th>Dish</th>
                   <th>Winner</th>
                   <th className="text-right">Ask Price</th>
@@ -1332,7 +1330,7 @@ const FarmPage: NextPage = () => {
                   const meta = ev.args.recipeId !== undefined ? RECIPE_META[Number(ev.args.recipeId)] : null;
                   return (
                     <tr key={i} className="hover:bg-base-50 border-base-200">
-                      <td className="font-mono text-base-content/40 text-xs">#{ev.args.minute?.toString()}</td>
+                      <td className="font-mono text-base-content/40 text-xs">#{ev.args.epoch?.toString()}</td>
                       <td>
                         <span className="flex items-center gap-1.5">
                           {meta && <span aria-hidden="true">{meta.emoji}</span>}

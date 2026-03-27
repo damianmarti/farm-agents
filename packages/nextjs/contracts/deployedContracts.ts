@@ -503,7 +503,7 @@ const deployedContracts = {
             {
               indexed: true,
               internalType: "uint256",
-              name: "minute",
+              name: "epoch",
               type: "uint256",
             },
             {
@@ -525,7 +525,7 @@ const deployedContracts = {
               type: "uint256",
             },
           ],
-          name: "MinuteSettled",
+          name: "EpochSettled",
           type: "event",
         },
         {
@@ -534,7 +534,7 @@ const deployedContracts = {
             {
               indexed: true,
               internalType: "uint256",
-              name: "minute",
+              name: "epoch",
               type: "uint256",
             },
             {
@@ -565,7 +565,7 @@ const deployedContracts = {
             {
               indexed: true,
               internalType: "uint256",
-              name: "minute",
+              name: "epoch",
               type: "uint256",
             },
             {
@@ -784,7 +784,12 @@ const deployedContracts = {
           inputs: [
             {
               internalType: "uint256",
-              name: "minute",
+              name: "epoch",
+              type: "uint256",
+            },
+            {
+              internalType: "uint256",
+              name: "offerIndex",
               type: "uint256",
             },
           ],
@@ -798,6 +803,11 @@ const deployedContracts = {
             {
               internalType: "uint256",
               name: "askPrice",
+              type: "uint256",
+            },
+            {
+              internalType: "uint256",
+              name: "amount",
               type: "uint256",
             },
           ],

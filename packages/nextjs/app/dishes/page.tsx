@@ -657,7 +657,7 @@ function OfferPanel({
           <button
             onClick={async () => {
               try {
-                await writeMarket({ functionName: "submitOffer", args: [parseEther(askInput)] });
+                await writeMarket({ functionName: "submitOffer", args: [parseEther(askInput), 1n] });
               } catch {}
             }}
             disabled={offerPending || !askInput}
@@ -669,7 +669,7 @@ function OfferPanel({
         </div>
       )}
 
-      <p className="text-xs text-base-content/40">Precio máximo: 2× coste de semillas · gana la oferta más baja</p>
+      <p className="text-xs text-base-content/40">Cap: 20-30× seed cost · top 3 cheapest offers per epoch win</p>
     </div>
   );
 }

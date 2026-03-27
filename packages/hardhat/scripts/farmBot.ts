@@ -415,13 +415,16 @@ async function manageMarket(
       continue;
     }
 
-    const state = await dishMarket.minuteState(pastMin);
-    const amWinner = state.hasOffers && BigInt(myIdx) === state.winnerIndex;
+    // Determine winner eligibility: count offers with strictly lower ask price
+    const myAsk = offers[myIdx].askPrice;
+    const betterCount = offers.filter((o, i) => i !== myIdx && o.askPrice < myAsk).length;
+    const MAX_WINNERS = 3;
+    const amWinner = betterCount < MAX_WINNERS;
 
-    if (amWinner && !state.settled) {
-      await tryTx(`settle market minute #${pastMin}`, () => dishMarket.settle(pastMin, { gasLimit: 200_000 }));
-    } else if (!amWinner) {
-      await tryTx(`withdraw losing offer minute #${pastMin}`, () =>
+    if (amWinner) {
+      await tryTx(`settle market epoch #${pastMin}`, () => dishMarket.settle(pastMin, myIdx, { gasLimit: 200_000 }));
+    } else {
+      await tryTx(`withdraw losing offer epoch #${pastMin}`, () =>
         dishMarket.withdrawOffer(pastMin, myIdx, { gasLimit: 100_000 }),
       );
     }

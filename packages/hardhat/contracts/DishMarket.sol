@@ -14,16 +14,16 @@ import { SeedShop } from "./SeedShop.sol";
  *
  * @dev Each epoch (10 s) a dish is selected using `epoch % recipeCount`.
  *      Any holder of that dish can escrow tokens and submit an ETH ask price.
- *      After the epoch ends, only the winner (lowest ask) can call settle() —
- *      their dishes are burned and they receive their ETH in the same transaction.
- *      Non-winners can withdraw their escrowed dishes at any time once the epoch ends,
- *      without waiting for the winner to settle.
+ *      After the epoch ends, the MAX_WINNERS cheapest offers can all call settle() —
+ *      their dishes are burned and they receive their ETH payment.
+ *      Non-winners can withdraw their escrowed dishes at any time.
  *
  *      The contract must be funded with ETH (via receive()) to pay winners.
  *      `availableFunds` tracks uncommitted ETH to prevent over-committing the treasury.
  */
 contract DishMarket is ReentrancyGuard {
     uint256 public constant EPOCH_DURATION = 10; // seconds per demand epoch
+    uint256 public constant MAX_WINNERS = 3;      // top-N cheapest offers win each epoch
 
     address public immutable owner;
     Chef public immutable chef;
@@ -39,11 +39,11 @@ contract DishMarket is ReentrancyGuard {
     }
 
     struct EpochState {
-        uint256 recipeId;       // snapshotted on first offer to avoid modulo drift
+        uint256 recipeId;        // snapshotted on first offer to avoid modulo drift
         bool hasOffers;
-        bool settled;
-        uint256 winnerIndex;    // index into _offers[epoch]
-        uint256 winnerAskPrice; // running lowest ask (updated on each new offer)
+        uint256 settledCount;    // how many winners have settled this epoch
+        uint256 winnerIndex;     // index of current lowest ask (updated on each offer)
+        uint256 winnerAskPrice;  // running lowest ask per dish
     }
 
     // ---- Storage ----
@@ -64,7 +64,6 @@ contract DishMarket is ReentrancyGuard {
     error AskPriceExceedsCap();
     error AlreadyOffered();
     error EpochNotOver();
-    error AlreadySettled();
     error NoOffers();
     error NotWinner();
     error InsufficientFunds();
@@ -133,7 +132,7 @@ contract DishMarket is ReentrancyGuard {
         uint256 winnerIndex, uint256 winnerAskPrice
     ) {
         EpochState storage s = epochState[epoch];
-        return (s.recipeId, s.hasOffers, s.settled, s.winnerIndex, s.winnerAskPrice);
+        return (s.recipeId, s.hasOffers, s.settledCount > 0, s.winnerIndex, s.winnerAskPrice);
     }
 
     /**
@@ -162,7 +161,7 @@ contract DishMarket is ReentrancyGuard {
 
     /**
      * @notice Computes the maximum allowed ask price for a recipe.
-     * @dev Multiplier scales with ingredient count: 20× (1-3), 30× (4+)
+     * @dev Multiplier scales with ingredient count: 20× (1-3 ingredients), 30× (4+)
      *      to compensate for the higher coordination cost of multi-ingredient dishes.
      * @param recipeId The recipe whose seed cost to compute.
      */
@@ -190,7 +189,7 @@ contract DishMarket is ReentrancyGuard {
      * @notice Submit an offer to sell one or more of the currently demanded dish.
      * @dev Escrows `amount` DishTokens. Requires prior approve(dishMarket, amount).
      *      One offer per address per epoch. The running lowest ask is tracked on-chain
-     *      so settle() is O(1). The winner receives askPrice × amount ETH.
+     *      so the UI can show competition. The MAX_WINNERS cheapest offers win.
      * @param askPrice ETH per dish (wei) the seller wants to receive.
      * @param amount   Number of dishes to sell.
      */
@@ -217,7 +216,7 @@ contract DishMarket is ReentrancyGuard {
             recipeId = state.recipeId;
         }
 
-        // Enforce price cap: ask price per dish must not exceed 20× the seed cost
+        // Enforce price cap: ask price per dish must not exceed the seed cost multiplier
         uint256 cap = _recipeSeedCostCap(recipeId);
         if (askPrice > cap) revert AskPriceExceedsCap();
 
@@ -242,46 +241,62 @@ contract DishMarket is ReentrancyGuard {
     }
 
     /**
-     * @notice Winner settles their auction, burning all their escrowed dishes and receiving ETH.
-     * @dev Only callable by the winner (lowest per-dish ask). Payment = askPrice × amount.
-     * @param epoch The epoch index to settle.
+     * @notice Settle a winning offer: burn escrowed dishes and receive ETH payment.
+     * @dev An offer wins if fewer than MAX_WINNERS other offers have a strictly lower
+     *      per-dish ask price. All tied offers at the boundary also win.
+     *      Callable by the offer's seller after the epoch has ended.
+     * @param epoch      The epoch index to settle.
+     * @param offerIndex Index of the caller's offer within that epoch's offer list.
      */
-    function settle(uint256 epoch) external nonReentrant {
+    function settle(uint256 epoch, uint256 offerIndex) external nonReentrant {
         if (currentEpoch() <= epoch) revert EpochNotOver();
 
         EpochState storage state = epochState[epoch];
-        if (state.settled) revert AlreadySettled();
         if (!state.hasOffers) revert NoOffers();
 
-        Offer storage winner = _offers[epoch][state.winnerIndex];
-        if (msg.sender != winner.seller) revert NotWinner();
+        Offer[] storage offers = _offers[epoch];
+        if (offerIndex >= offers.length) revert InvalidOfferIndex();
 
-        uint256 payment = winner.askPrice * winner.amount;
+        Offer storage myOffer = offers[offerIndex];
+        if (myOffer.seller != msg.sender) revert NotYourOffer();
+        if (myOffer.claimed) revert AlreadyClaimed();
+
+        // Count how many offers have a strictly lower per-dish ask price
+        uint256 betterCount = 0;
+        uint256 n = offers.length;
+        for (uint256 i = 0; i < n; ) {
+            if (i != offerIndex && offers[i].askPrice < myOffer.askPrice) {
+                betterCount++;
+            }
+            unchecked { ++i; }
+        }
+        if (betterCount >= MAX_WINNERS) revert NotWinner();
+
+        uint256 payment = myOffer.askPrice * myOffer.amount;
         if (availableFunds < payment) revert InsufficientFunds();
 
         // Effects
-        state.settled = true;
+        myOffer.claimed = true;
         availableFunds -= payment;
-        winner.claimed = true;
+        state.settledCount++;
 
         // Burn the winner's escrowed dish tokens
         (, , , address dishTokenAddr) = chef.getRecipe(state.recipeId);
-        ERC20Burnable(dishTokenAddr).burn(winner.amount);
+        ERC20Burnable(dishTokenAddr).burn(myOffer.amount);
 
-        emit EpochSettled(epoch, state.recipeId, winner.seller, payment);
+        emit EpochSettled(epoch, state.recipeId, msg.sender, myOffer.askPrice);
 
-        // Pay the winner directly (they are the caller)
-        (bool ok, ) = winner.seller.call{ value: payment }("");
+        // Pay the winner (they are the caller — no reentrancy risk from untrusted caller)
+        (bool ok, ) = msg.sender.call{ value: payment }("");
         if (!ok) revert TransferFailed();
     }
 
     /**
-     * @notice Reclaim an escrowed dish token for a non-winning offer.
-     * @dev Two withdrawal paths:
-     *   - During the epoch: allowed if this offer is NOT the current lowest ask.
-     *   - After the epoch ends: allowed for any non-winner, with no dependency
-     *     on whether the winner has called settle() yet.
-     *   The winner's offer can only be freed via settle().
+     * @notice Reclaim an escrowed dish token for a non-winning or forfeited offer.
+     * @dev During an active epoch: withdrawal is blocked for the current lowest-ask offer
+     *      to prevent gaming (undercutting then withdrawing). All other offers can withdraw.
+     *      After the epoch ends: any unclaimed offer can withdraw freely. Winners who
+     *      choose to withdraw forfeit their ETH payment.
      * @param epoch      The epoch index the offer was submitted in.
      * @param offerIndex Index of the offer within that epoch's offer list.
      */
@@ -290,8 +305,10 @@ contract DishMarket is ReentrancyGuard {
 
         EpochState storage state = epochState[epoch];
 
-        // The winner is always blocked from withdrawing here — they must use settle()
-        if (state.hasOffers && offerIndex == state.winnerIndex) revert OfferIsCurrentWinner();
+        // During an active epoch: protect the current lowest offer from being withdrawn
+        if (currentEpoch() == epoch && state.hasOffers && offerIndex == state.winnerIndex) {
+            revert OfferIsCurrentWinner();
+        }
 
         Offer storage offer = _offers[epoch][offerIndex];
         if (offer.seller != msg.sender) revert NotYourOffer();
