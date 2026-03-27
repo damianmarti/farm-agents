@@ -170,11 +170,16 @@ const RECIPES: Recipe[] = [
 const RECIPE_COUNT = RECIPES.length;
 
 // ─── Secondary demand helper ────────────────────────────────────────────────
-// Mirrors DishMarket._secondDemandForEpoch (deterministic, no keccak needed off-chain).
+// Simulates block.prevrandao — a fresh random value each epoch tick.
+// Uses xorshift32 seeded per epoch to get a deterministic-but-varied distribution.
 
 function secondDemandForEpoch(epoch: number, primaryId: number, count: number): number {
-  // Large-prime hash of epoch for pseudo-randomness without crypto imports
-  const raw = ((epoch * 1_234_567 + 987_654_321) >>> 0) % count;
+  // xorshift32 seeded with epoch — simulates unpredictable block.prevrandao
+  let x = (epoch * 2_654_435_761) >>> 0; // golden-ratio hashing
+  x ^= x << 13;
+  x ^= x >>> 17;
+  x ^= x << 5;
+  const raw = (x >>> 0) % count;
   return raw === primaryId ? (raw + 1) % count : raw;
 }
 

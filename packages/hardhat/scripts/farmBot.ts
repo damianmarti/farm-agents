@@ -168,25 +168,24 @@ async function ensureApproved(tokenAddr: string, spender: string, signer: Signer
 
 // ─── Demand planning ──────────────────────────────────────────────────────────
 
-/** Compute the secondary (pseudo-random) demanded recipe for an epoch — mirrors DishMarket._secondDemandForEpoch. */
-function computeSecondDemand(epoch: bigint, primaryId: number, count: number): number {
-  const hash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(["string", "uint256"], ["dish2", epoch]));
-  let raw = Number(BigInt(hash) % BigInt(count));
-  if (raw === primaryId) raw = (raw + 1) % count;
-  return raw;
-}
-
-/** Returns the sequence of recipe demands within the lookahead window (both primary + secondary), soonest first. */
-function upcomingDemands(currentMinute: bigint): { recipeId: number; minutesUntil: number }[] {
+/**
+ * Returns the sequence of recipe demands within the lookahead window, soonest first.
+ * The current epoch's secondary demand (from block.prevrandao) is included at minutesUntil=0.
+ * Future epochs' secondary demands are unpredictable and are omitted from the lookahead.
+ */
+function upcomingDemands(
+  currentMinute: bigint,
+  currentSecondRecipeId: number,
+): { recipeId: number; minutesUntil: number }[] {
   const result: { recipeId: number; minutesUntil: number }[] = [];
   for (let i = 0; i <= LOOKAHEAD_MINUTES; i++) {
-    const epoch = currentMinute + BigInt(i);
-    const primaryId = Number(epoch % BigInt(RECIPE_COUNT));
-    const secondaryId = computeSecondDemand(epoch, primaryId, RECIPE_COUNT);
+    const primaryId = Number((currentMinute + BigInt(i)) % BigInt(RECIPE_COUNT));
     result.push({ recipeId: primaryId, minutesUntil: i });
-    if (secondaryId !== primaryId) {
-      result.push({ recipeId: secondaryId, minutesUntil: i });
-    }
+  }
+  // Include current epoch's secondary demand (unknown for future epochs)
+  const currentPrimary = Number(currentMinute % BigInt(RECIPE_COUNT));
+  if (currentSecondRecipeId !== currentPrimary) {
+    result.push({ recipeId: currentSecondRecipeId, minutesUntil: 0 });
   }
   return result;
 }
@@ -198,6 +197,7 @@ function upcomingDemands(currentMinute: bigint): { recipeId: number; minutesUnti
  */
 async function prioritizedSeedNeeds(
   currentMinute: bigint,
+  currentSecondRecipeId: number,
   chef: Chef,
   farmManager: FarmManager,
   botAddr: string,
@@ -206,7 +206,7 @@ async function prioritizedSeedNeeds(
   // seedId → minutes until earliest demand that needs it
   const seedUrgency = new Map<number, number>();
 
-  for (const { recipeId, minutesUntil } of upcomingDemands(currentMinute)) {
+  for (const { recipeId, minutesUntil } of upcomingDemands(currentMinute, currentSecondRecipeId)) {
     // Skip if we already hold a dish token for this recipe
     const recipeInfo = await chef.getRecipe(recipeId);
     const dishToken = await hre.ethers.getContractAt("ERC20", recipeInfo[3], signer);
@@ -299,9 +299,17 @@ async function managePlots(
   const farmManagerAddr = await farmManager.getAddress();
 
   const currentMinute: bigint = await dishMarket.currentMinute();
+  const currentSecondId: bigint = await dishMarket.currentSecondDemand();
   // Compute seed priority once; mutate as we assign seeds to empty lands so
   // each land gets a different (next-priority) seed.
-  const seedQueue = await prioritizedSeedNeeds(currentMinute, chef, farmManager, botAddr, signer);
+  const seedQueue = await prioritizedSeedNeeds(
+    currentMinute,
+    Number(currentSecondId),
+    chef,
+    farmManager,
+    botAddr,
+    signer,
+  );
 
   for (const landId of ownedLands) {
     const state: bigint = await farmManager.getLandState(landId);
@@ -357,8 +365,9 @@ async function managePlots(
 async function manageCooking(chef: Chef, dishMarket: DishMarket, botAddr: string, signer: Signer): Promise<void> {
   const chefAddr = await chef.getAddress();
   const currentMinute: bigint = await dishMarket.currentMinute();
+  const currentSecondId: bigint = await dishMarket.currentSecondDemand();
 
-  for (const { recipeId, minutesUntil } of upcomingDemands(currentMinute)) {
+  for (const { recipeId, minutesUntil } of upcomingDemands(currentMinute, Number(currentSecondId))) {
     const recipeInfo = await chef.getRecipe(recipeId);
     const recipeName: string = recipeInfo[0];
     const dishTokenAddr: string = recipeInfo[3];
@@ -561,7 +570,8 @@ async function main(): Promise<void> {
 
     // Show upcoming demand schedule
     const currentMinute: bigint = await dishMarket.currentMinute();
-    const upcoming = upcomingDemands(currentMinute);
+    const currentSecondDemandId: bigint = await dishMarket.currentSecondDemand();
+    const upcoming = upcomingDemands(currentMinute, Number(currentSecondDemandId));
     log(
       `  📅 Upcoming: ${upcoming
         .slice(0, 6)

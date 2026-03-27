@@ -14,7 +14,7 @@ import { SeedShop } from "./SeedShop.sol";
  *
  * @dev Each epoch (10 s) two dishes are active:
  *   - Primary:   epoch % recipeCount  (deterministic, fully predictable)
- *   - Secondary: keccak256("dish2", epoch) % recipeCount  (pseudo-random, different from primary)
+ *   - Secondary: block.prevrandao % recipeCount  (beacon-chain randomness, snapshotted on first offer)
  *
  *      Any holder of either demanded dish can escrow tokens and submit an ETH ask price,
  *      specifying which recipe they are selling. After the epoch ends, the MAX_WINNERS
@@ -167,17 +167,17 @@ contract DishMarket is ReentrancyGuard {
     }
 
     /**
-     * @notice The secondary (pseudo-random) dish demanded during a given epoch.
-     * @dev Uses the snapshotted secondRecipeId if offers exist, otherwise computes live.
-     *      The secondary demand is derived from keccak256("dish2", epoch) and is guaranteed
-     *      to differ from the primary demand.
+     * @notice The secondary dish demanded during a given epoch.
+     * @dev Returns the snapshotted secondRecipeId if any offer has been submitted
+     *      (stable for the rest of the epoch). Otherwise returns a live value derived
+     *      from block.prevrandao, which changes every block until the first offer locks it.
      */
     function secondDemandForEpoch(uint256 epoch) public view returns (uint256) {
         EpochState storage state = epochState[epoch];
         if (state.hasOffers) return state.secondRecipeId;
         uint256 count = chef.recipeCount();
         if (count == 0) revert NoRecipes();
-        return _secondDemandForEpoch(epoch, epoch % count, count);
+        return _secondDemandLive(epoch % count, count);
     }
 
     /// @notice The secondary (pseudo-random) dish demanded right now.
@@ -193,12 +193,13 @@ contract DishMarket is ReentrancyGuard {
     // ---- Internal helpers ----
 
     /**
-     * @notice Computes the secondary demanded recipe for an epoch.
-     * @dev Uses keccak256 of ("dish2", epoch) to derive a pseudo-random recipe index
-     *      that is guaranteed to differ from primaryId when recipeCount > 1.
+     * @notice Computes the secondary demanded recipe using beacon-chain randomness.
+     * @dev Uses block.prevrandao (EIP-4399) for unpredictability. Guaranteed to differ
+     *      from primaryId when recipeCount > 1. Called at snapshot time (first offer)
+     *      so the value is stable for the entire epoch once locked in.
      */
-    function _secondDemandForEpoch(uint256 epoch, uint256 primaryId, uint256 count) internal pure returns (uint256) {
-        uint256 raw = uint256(keccak256(abi.encode("dish2", epoch))) % count;
+    function _secondDemandLive(uint256 primaryId, uint256 count) internal view returns (uint256) {
+        uint256 raw = block.prevrandao % count;
         if (raw == primaryId) raw = (raw + 1) % count;
         return raw;
     }
@@ -254,7 +255,7 @@ contract DishMarket is ReentrancyGuard {
         // Snapshot both recipes on first offer to prevent modulo drift
         if (!state.hasOffers) {
             state.recipeId = epoch % count;
-            state.secondRecipeId = _secondDemandForEpoch(epoch, state.recipeId, count);
+            state.secondRecipeId = _secondDemandLive(state.recipeId, count);
         }
 
         // Validate the submitted recipe is one of the two demanded this epoch
