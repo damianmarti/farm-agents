@@ -197,11 +197,11 @@ function DishMarketOfferPanel({
     return (
       <div className="mt-4 pt-4 border-t border-base-200">
         <p className="text-xs text-base-content/40">
-          No tienes <strong>{recipeName}</strong> — cocínalo en{" "}
+          You have no <strong>{recipeName}</strong> — cook it in{" "}
           <a href="/dishes" className="link link-primary">
             /dishes
           </a>{" "}
-          para poder ofertar.
+          to submit an offer.
         </p>
       </div>
     );
@@ -211,7 +211,7 @@ function DishMarketOfferPanel({
     return (
       <div className="mt-4 pt-4 border-t border-base-200 flex items-center gap-2">
         <span className="text-success font-bold">✓</span>
-        <p className="text-xs font-semibold text-success">Oferta enviada para el minuto #{currentMinute?.toString()}</p>
+        <p className="text-xs font-semibold text-success">Offer submitted for epoch #{currentMinute?.toString()}</p>
       </div>
     );
   }
@@ -1323,11 +1323,11 @@ const FarmPage: NextPage = () => {
         <section className="card bg-base-100 border border-base-200 shadow-sm">
           <div className="card-body p-5">
             <div className="flex items-center gap-2 mb-2">
-              <h2 className="font-bold text-base">💸 Mis Ofertas Pendientes</h2>
+              <h2 className="font-bold text-base">💸 My Pending Offers</h2>
               <span className="badge badge-warning badge-sm">{myPendingMinutes.length}</span>
             </div>
             <p className="text-xs text-base-content/40 mb-3">
-              Minutos pasados donde tienes una oferta — cobra si ganaste, o recupera el plato si perdiste.
+              Past epochs where you submitted an offer — collect if you won, or reclaim your dish token if you lost.
             </p>
             <div className="flex flex-col divide-y divide-base-200">
               {myPendingMinutes.map(minute => (

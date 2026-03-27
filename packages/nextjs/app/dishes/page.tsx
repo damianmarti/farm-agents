@@ -592,7 +592,7 @@ function OfferPanel({
     return (
       <div className="border-t border-warning/20 px-5 py-3">
         <p className="text-xs text-base-content/50">
-          No tienes <strong>{recipeName}</strong> — cocínalo primero para poder ofertar.
+          You have no <strong>{recipeName}</strong> — cook it first to submit an offer.
         </p>
       </div>
     );
@@ -602,7 +602,7 @@ function OfferPanel({
     return (
       <div className="border-t border-warning/20 bg-success/10 px-5 py-3 flex items-center gap-2">
         <span className="text-success font-bold">✓</span>
-        <p className="text-xs font-semibold text-success">Oferta enviada para este minuto</p>
+        <p className="text-xs font-semibold text-success">Offer submitted for this epoch</p>
       </div>
     );
   }
