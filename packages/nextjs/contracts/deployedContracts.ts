@@ -7,7 +7,7 @@ import { GenericContractsDeclaration } from "~~/utils/scaffold-eth/contract";
 const deployedContracts = {
   31337: {
     Chef: {
-      address: "0x0E801D84Fa97b50751Dbf25036d067dCf18858bF",
+      address: "0x18E317A7D70d8fBf8e6E893616b52390EbBdb629",
       abi: [
         {
           inputs: [
@@ -391,10 +391,10 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 46,
+      deployedOnBlock: 769,
     },
     DishMarket: {
-      address: "0x82e01223d51Eb87e16A03E24687EDF0F294da6f1",
+      address: "0xA7c59f010700930003b33aB25a7a0679C860f29c",
       abi: [
         {
           inputs: [
@@ -821,25 +821,6 @@ const deployedContracts = {
               type: "uint256",
             },
           ],
-          name: "secondDemandForEpoch",
-          outputs: [
-            {
-              internalType: "uint256",
-              name: "",
-              type: "uint256",
-            },
-          ],
-          stateMutability: "view",
-          type: "function",
-        },
-        {
-          inputs: [
-            {
-              internalType: "uint256",
-              name: "epoch",
-              type: "uint256",
-            },
-          ],
           name: "getOffers",
           outputs: [
             {
@@ -966,6 +947,25 @@ const deployedContracts = {
               name: "epoch",
               type: "uint256",
             },
+          ],
+          name: "secondDemandForEpoch",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "uint256",
+              name: "epoch",
+              type: "uint256",
+            },
             {
               internalType: "uint256",
               name: "offerIndex",
@@ -1037,10 +1037,10 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 57,
+      deployedOnBlock: 780,
     },
     FarmManager: {
-      address: "0x4ed7c70F96B99c776995fB64377f0d4aB3B0e1C1",
+      address: "0x4EE6eCAD1c2Dae9f525404De8555724e3c35d07B",
       abi: [
         {
           inputs: [
@@ -1636,10 +1636,10 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 25,
+      deployedOnBlock: 748,
     },
     LandAuction: {
-      address: "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+      address: "0xFD471836031dc5108809D173A067e8486B9047A3",
       abi: [
         {
           inputs: [
@@ -2012,10 +2012,10 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 3,
+      deployedOnBlock: 726,
     },
     SeedShop: {
-      address: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
+      address: "0xcbEAF3BDe82155F56486Fb5a1072cb8baAf547cc",
       abi: [
         {
           inputs: [
@@ -2335,7 +2335,7 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 4,
+      deployedOnBlock: 727,
     },
   },
 } as const;
