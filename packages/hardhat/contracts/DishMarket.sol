@@ -196,6 +196,22 @@ contract DishMarket is ReentrancyGuard {
         return _offers[epoch];
     }
 
+    /**
+     * @notice Returns the cutoff ask price for winning a given recipe in a given epoch.
+     * @dev Equal to the MAX_WINNERS-th cheapest ask submitted so far for that recipe,
+     *      or type(uint256).max when fewer than MAX_WINNERS offers exist (every offer wins).
+     *      Use off-chain (bots, frontend) to decide settle-or-withdraw without scanning offers.
+     * @param epoch    The epoch index to query.
+     * @param recipeId The recipe to query (primary or secondary).
+     */
+    function getWinnerCutoff(uint256 epoch, uint256 recipeId) external view returns (uint256) {
+        EpochState storage s = epochState[epoch];
+        if (!s.hasOffers) return type(uint256).max;
+        return recipeId == s.recipeId
+            ? s.primaryWinnerPrices[MAX_WINNERS - 1]
+            : s.secondaryWinnerPrices[MAX_WINNERS - 1];
+    }
+
     // ---- Internal helpers ----
 
     /**
@@ -285,6 +301,7 @@ contract DishMarket is ReentrancyGuard {
 
         uint256 totalPayment = askPrice * amount;
         if (totalPayment > availableFunds) revert AskPriceTooHigh();
+        availableFunds -= totalPayment; // commit: prevent concurrent offers from over-spending
 
         uint256 epoch = currentEpoch();
 
@@ -385,11 +402,9 @@ contract DishMarket is ReentrancyGuard {
         if (myOffer.askPrice > cutoff) revert NotWinner();
 
         uint256 payment = myOffer.askPrice * myOffer.amount;
-        if (availableFunds < payment) revert InsufficientFunds();
 
-        // Effects
+        // Effects (funds were committed in submitOffer; no second deduction needed)
         myOffer.claimed = true;
-        availableFunds -= payment;
         state.settledCount++;
 
         // Burn the winner's escrowed dish tokens (use offer's recipeId, not state.recipeId)
@@ -435,6 +450,7 @@ contract DishMarket is ReentrancyGuard {
         if (offer.claimed) revert AlreadyClaimed();
 
         offer.claimed = true;
+        availableFunds += offer.askPrice * offer.amount; // uncommit reserved funds
 
         // Use offer.recipeId (not state.recipeId) — the offer may be for secondary recipe
         (, , , address dishTokenAddr) = chef.getRecipe(offer.recipeId);

@@ -863,6 +863,30 @@ const deployedContracts = {
           inputs: [
             {
               internalType: "uint256",
+              name: "epoch",
+              type: "uint256",
+            },
+            {
+              internalType: "uint256",
+              name: "recipeId",
+              type: "uint256",
+            },
+          ],
+          name: "getWinnerCutoff",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "uint256",
               name: "",
               type: "uint256",
             },

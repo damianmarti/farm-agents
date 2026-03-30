@@ -428,7 +428,6 @@ async function manageMarket(
   const currentMin: bigint = await dishMarket.currentMinute();
 
   // ── Settle / withdraw past offers ────────────────────────────────────────
-  const MAX_WINNERS = 5;
   for (const pastMin of [...pendingOfferMinutes]) {
     if (pastMin >= currentMin) continue;
 
@@ -445,10 +444,9 @@ async function manageMarket(
     for (const myIdx of myIdxs) {
       const myAsk = offers[myIdx].askPrice;
       const myRecipeId = offers[myIdx].recipeId;
-      const betterCount = offers.filter(
-        (o, i) => i !== myIdx && o.recipeId === myRecipeId && o.askPrice < myAsk,
-      ).length;
-      const amWinner = betterCount < MAX_WINNERS;
+      // Mirror the on-chain settle() check exactly: wins iff askPrice <= cutoff.
+      const cutoff = await dishMarket.getWinnerCutoff(pastMin, myRecipeId);
+      const amWinner = myAsk <= cutoff;
 
       if (amWinner) {
         await tryTx(`settle market epoch #${pastMin} recipe #${myRecipeId}`, () =>

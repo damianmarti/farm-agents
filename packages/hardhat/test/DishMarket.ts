@@ -298,7 +298,11 @@ describe("DishMarket", function () {
       expect(balAfter - balBefore + gas).to.equal(ethers.parseEther("0.3"));
       // Winner's dish was burned (supply dropped by 1)
       expect(await dishToken.totalSupply()).to.equal(supplyBefore - 1n);
-      expect(await market.availableFunds()).to.equal(ethers.parseEther("10") - ethers.parseEther("0.3"));
+      // availableFunds was committed at submitOffer (deducted for both offers: 0.5 + 0.3).
+      // settle() pays from committed funds without a second deduction.
+      expect(await market.availableFunds()).to.equal(
+        ethers.parseEther("10") - ethers.parseEther("0.5") - ethers.parseEther("0.3"),
+      );
     });
 
     it("reverts when non-winner calls settle", async function () {
@@ -829,6 +833,111 @@ describe("DishMarket", function () {
           market.connect(seller1).submitOffer(notDemanded, ethers.parseEther("0.1"), 1n),
         ).to.be.revertedWithCustomError(market, "NotDemandedRecipe");
       }
+    });
+  });
+
+  // ---- funds commitment (fix #1) ----
+
+  describe("funds commitment", function () {
+    it("availableFunds decrements on submitOffer and restores on withdrawOffer", async function () {
+      const { market, marketAddr, dishToken, seller1, giveDish } = await loadFixture(deployFixture);
+      await giveDish(seller1, 1);
+      await dishToken.connect(seller1).approve(marketAddr, 1);
+
+      const before = await market.availableFunds();
+      const epochStart = (Math.floor((await time.latest()) / EPOCH_DURATION) + 1) * EPOCH_DURATION;
+      await time.setNextBlockTimestamp(epochStart);
+      const minute = BigInt(epochStart / EPOCH_DURATION);
+      await market.connect(seller1).submitOffer(0, ethers.parseEther("0.1"), 1n);
+      expect(await market.availableFunds()).to.equal(before - ethers.parseEther("0.1"));
+
+      // Advance past the epoch so the leader guard doesn't block withdrawal
+      await time.increase(EPOCH_DURATION + 1);
+      await market.connect(seller1).withdrawOffer(minute, 0);
+      expect(await market.availableFunds()).to.equal(before);
+    });
+
+    it("concurrent offers cannot collectively exceed availableFunds", async function () {
+      // Treasury has 10 ETH. Each call asks 0.5 ETH × 10 = 5 ETH.
+      // After two offers (10 ETH committed) the treasury is exhausted; the third must fail.
+      const { market, marketAddr, dishToken, seller1, seller2, seller3, giveDish } = await loadFixture(deployFixture);
+      for (const s of [seller1, seller2, seller3]) {
+        await giveDish(s, 10);
+        await dishToken.connect(s).approve(marketAddr, 10);
+      }
+      const epochStart = (Math.floor((await time.latest()) / EPOCH_DURATION) + 1) * EPOCH_DURATION;
+      await time.setNextBlockTimestamp(epochStart);
+
+      await market.connect(seller1).submitOffer(0, ethers.parseEther("0.5"), 10n); // 5 ETH committed
+      await market.connect(seller2).submitOffer(0, ethers.parseEther("0.5"), 10n); // 10 ETH committed
+      await expect(market.connect(seller3).submitOffer(0, ethers.parseEther("0.5"), 10n)).to.be.revertedWithCustomError(
+        market,
+        "AskPriceTooHigh",
+      );
+    });
+
+    it("settle does not double-deduct: availableFunds stays at committed level after payout", async function () {
+      const { market, marketAddr, dishToken, seller1, giveDish } = await loadFixture(deployFixture);
+      await giveDish(seller1, 1);
+      await dishToken.connect(seller1).approve(marketAddr, 1);
+
+      const fundsBefore = await market.availableFunds();
+      const epochStart = (Math.floor((await time.latest()) / EPOCH_DURATION) + 1) * EPOCH_DURATION;
+      await time.setNextBlockTimestamp(epochStart);
+      const minute = BigInt(epochStart / EPOCH_DURATION);
+      await market.connect(seller1).submitOffer(0, ethers.parseEther("0.1"), 1n);
+      expect(await market.availableFunds()).to.equal(fundsBefore - ethers.parseEther("0.1"));
+
+      await time.increase(EPOCH_DURATION + 1);
+      await market.connect(seller1).settle(minute, 0);
+
+      // The committed 0.1 ETH was paid out; availableFunds was already reduced in submitOffer
+      // and must NOT be reduced again by settle().
+      expect(await market.availableFunds()).to.equal(fundsBefore - ethers.parseEther("0.1"));
+    });
+  });
+
+  // ---- getWinnerCutoff (fix #2) ----
+
+  describe("getWinnerCutoff", function () {
+    it("returns type(uint256).max when no offers exist for the epoch", async function () {
+      const { market } = await loadFixture(deployFixture);
+      const epoch = await market.currentMinute();
+      expect(await market.getWinnerCutoff(epoch, 0)).to.equal(ethers.MaxUint256);
+    });
+
+    it("returns max while fewer than MAX_WINNERS offers exist", async function () {
+      const { market, marketAddr, dishToken, seller1, giveDish } = await loadFixture(deployFixture);
+      await giveDish(seller1, 1);
+      await dishToken.connect(seller1).approve(marketAddr, 1);
+      const epochStart = (Math.floor((await time.latest()) / EPOCH_DURATION) + 1) * EPOCH_DURATION;
+      await time.setNextBlockTimestamp(epochStart);
+      const minute = BigInt(epochStart / EPOCH_DURATION);
+      await market.connect(seller1).submitOffer(0, ethers.parseEther("0.1"), 1n);
+      // 1 of MAX_WINNERS=5 slots filled — cutoff is still max (every offer wins)
+      expect(await market.getWinnerCutoff(minute, 0)).to.equal(ethers.MaxUint256);
+    });
+
+    it("returns the MAX_WINNERS-th cheapest price once slots are full", async function () {
+      const base = await loadFixture(deployFixture);
+      const { market, marketAddr, dishToken, giveDish } = base;
+      const signers = await ethers.getSigners();
+      const cheapSellers = signers.slice(1, 6); // 5 sellers
+      const expensiveSeller = signers[6];
+      for (const s of [...cheapSellers, expensiveSeller]) {
+        await giveDish(s, 1);
+        await dishToken.connect(s).approve(marketAddr, 1);
+      }
+      const epochStart = (Math.floor((await time.latest()) / EPOCH_DURATION) + 1) * EPOCH_DURATION;
+      await time.setNextBlockTimestamp(epochStart);
+      const minute = BigInt(epochStart / EPOCH_DURATION);
+      for (const s of cheapSellers) {
+        await market.connect(s).submitOffer(0, ethers.parseEther("0.1"), 1n);
+      }
+      await market.connect(expensiveSeller).submitOffer(0, ethers.parseEther("0.5"), 1n);
+
+      // 5 slots filled at 0.1; expensive offer is above cutoff and doesn't displace any slot
+      expect(await market.getWinnerCutoff(minute, 0)).to.equal(ethers.parseEther("0.1"));
     });
   });
 });
