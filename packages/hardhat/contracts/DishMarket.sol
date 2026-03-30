@@ -50,10 +50,16 @@ contract DishMarket is ReentrancyGuard {
         uint256 secondRecipeId;        // secondary demand: pseudo-random, snapshotted on first offer
         bool hasOffers;
         uint256 settledCount;          // total winners settled (both recipes combined)
-        uint256 winnerIndex;           // index of lowest-ask offer for primary recipe
+        uint256 winnerIndex;           // index of lowest-ask offer for primary recipe (for withdraw guard)
         uint256 winnerAskPrice;        // running lowest ask per dish for primary recipe
-        uint256 secondWinnerIndex;     // index of lowest-ask offer for secondary recipe
+        uint256 secondWinnerIndex;     // index of lowest-ask offer for secondary recipe (for withdraw guard)
         uint256 secondWinnerAskPrice;  // running lowest ask per dish for secondary recipe
+        // Top-MAX_WINNERS ask prices per recipe, sorted ascending.
+        // Sentineled with type(uint256).max until MAX_WINNERS offers arrive.
+        // arr[MAX_WINNERS-1] is the cutoff: any offer with askPrice <= cutoff wins.
+        // Not exposed by the public epochState getter (Solidity omits arrays from struct getters).
+        uint256[MAX_WINNERS] primaryWinnerPrices;
+        uint256[MAX_WINNERS] secondaryWinnerPrices;
     }
 
     // ---- Storage ----
@@ -205,6 +211,38 @@ contract DishMarket is ReentrancyGuard {
     }
 
     /**
+     * @notice Inserts `price` into a sorted ascending winner-price array (maintained during submitOffer).
+     * @dev Array slots are sentineled with type(uint256).max until MAX_WINNERS offers arrive.
+     *      When the array is not yet full (last slot == max), inserts in sorted position.
+     *      When the array is full, inserts only if `price` strictly beats the current worst winner —
+     *      which drops the prior worst and shifts the cutoff down. Equal-to-cutoff prices are
+     *      NOT inserted (the cutoff is unchanged, and the offer still passes the <= check in settle).
+     *      Gas: O(MAX_WINNERS) shifts — constant for any fixed MAX_WINNERS.
+     */
+    function _insertWinnerPrice(uint256[MAX_WINNERS] storage arr, uint256 price) internal {
+        if (arr[MAX_WINNERS - 1] == type(uint256).max) {
+            // Array not yet full: find insertion point (first index where arr[j] > price)
+            uint256 j = 0;
+            while (j < MAX_WINNERS && arr[j] <= price) { unchecked { ++j; } }
+            // Shift arr[j..MAX_WINNERS-2] right by one to make room (drops one sentinel)
+            for (uint256 k = MAX_WINNERS - 1; k > j; ) {
+                arr[k] = arr[k - 1];
+                unchecked { --k; }
+            }
+            arr[j] = price;
+        } else if (price < arr[MAX_WINNERS - 1]) {
+            // Array full: only update if price strictly beats the current worst winner (cutoff drops)
+            uint256 j = MAX_WINNERS - 1;
+            while (j > 0 && arr[j - 1] > price) {
+                arr[j] = arr[j - 1];
+                unchecked { --j; }
+            }
+            arr[j] = price;
+        }
+        // price >= arr[MAX_WINNERS-1]: offer wins at the current cutoff; no array update needed.
+    }
+
+    /**
      * @notice Computes the maximum allowed ask price for a recipe.
      * @dev Multiplier scales with ingredient count: 20× (1-3 ingredients), 30× (4+)
      *      to compensate for the higher coordination cost of multi-ingredient dishes.
@@ -256,6 +294,12 @@ contract DishMarket is ReentrancyGuard {
         if (!state.hasOffers) {
             state.recipeId = epoch % count;
             state.secondRecipeId = _secondDemandLive(state.recipeId, count);
+            // Sentinel-fill winner price arrays so arr[MAX_WINNERS-1]==max means "not yet full"
+            for (uint256 i = 0; i < MAX_WINNERS; ) {
+                state.primaryWinnerPrices[i] = type(uint256).max;
+                state.secondaryWinnerPrices[i] = type(uint256).max;
+                unchecked { ++i; }
+            }
         }
 
         // Validate the submitted recipe is one of the two demanded this epoch
@@ -293,6 +337,7 @@ contract DishMarket is ReentrancyGuard {
                 state.winnerAskPrice = askPrice;
                 state.winnerIndex = idx;
             }
+            _insertWinnerPrice(state.primaryWinnerPrices, askPrice);
         } else {
             // Secondary recipe winner tracking
             bool noYet = (state.secondWinnerAskPrice == 0);
@@ -300,6 +345,7 @@ contract DishMarket is ReentrancyGuard {
                 state.secondWinnerAskPrice = askPrice;
                 state.secondWinnerIndex = idx;
             }
+            _insertWinnerPrice(state.secondaryWinnerPrices, askPrice);
         }
 
         IERC20(dishTokenAddr).transferFrom(msg.sender, address(this), amount);
@@ -328,17 +374,15 @@ contract DishMarket is ReentrancyGuard {
         if (myOffer.seller != msg.sender) revert NotYourOffer();
         if (myOffer.claimed) revert AlreadyClaimed();
 
-        // Count how many offers for the SAME recipe have a strictly lower per-dish ask price
+        // O(1) winner check: compare against the pre-computed cutoff price stored during submitOffer.
+        // arr[MAX_WINNERS-1] is the MAX_WINNERS-th cheapest ask seen for this recipe.
+        // If still type(uint256).max, fewer than MAX_WINNERS offers exist — every offer wins.
+        // Any offer with askPrice <= cutoff has fewer than MAX_WINNERS strictly cheaper rivals.
         uint256 myRecipeId = myOffer.recipeId;
-        uint256 betterCount = 0;
-        uint256 n = offers.length;
-        for (uint256 i = 0; i < n; ) {
-            if (i != offerIndex && offers[i].recipeId == myRecipeId && offers[i].askPrice < myOffer.askPrice) {
-                betterCount++;
-            }
-            unchecked { ++i; }
-        }
-        if (betterCount >= MAX_WINNERS) revert NotWinner();
+        uint256 cutoff = (myRecipeId == state.recipeId)
+            ? state.primaryWinnerPrices[MAX_WINNERS - 1]
+            : state.secondaryWinnerPrices[MAX_WINNERS - 1];
+        if (myOffer.askPrice > cutoff) revert NotWinner();
 
         uint256 payment = myOffer.askPrice * myOffer.amount;
         if (availableFunds < payment) revert InsufficientFunds();
@@ -371,11 +415,18 @@ contract DishMarket is ReentrancyGuard {
 
         EpochState storage state = epochState[epoch];
 
-        // During an active epoch: protect the current lowest offer for each recipe
+        // During an active epoch: protect the current lowest offer for each recipe.
+        // Guard fires only when that recipe has received at least one offer (askPrice > 0 is enforced,
+        // so winnerAskPrice == 0 reliably means no offer for that recipe yet, avoiding false positives
+        // from the default winnerIndex == 0 matching a freshly submitted offer at index 0).
         if (currentEpoch() == epoch && state.hasOffers) {
             Offer storage checkOffer = _offers[epoch][offerIndex];
-            bool isPrimaryLeader = (checkOffer.recipeId == state.recipeId && offerIndex == state.winnerIndex);
-            bool isSecondaryLeader = (checkOffer.recipeId == state.secondRecipeId && offerIndex == state.secondWinnerIndex);
+            bool isPrimaryLeader = state.winnerAskPrice > 0
+                && checkOffer.recipeId == state.recipeId
+                && offerIndex == state.winnerIndex;
+            bool isSecondaryLeader = state.secondWinnerAskPrice > 0
+                && checkOffer.recipeId == state.secondRecipeId
+                && offerIndex == state.secondWinnerIndex;
             if (isPrimaryLeader || isSecondaryLeader) revert OfferIsCurrentWinner();
         }
 

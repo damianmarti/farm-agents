@@ -171,11 +171,13 @@ const RECIPE_COUNT = RECIPES.length;
 
 // ─── Secondary demand helper ────────────────────────────────────────────────
 // Simulates block.prevrandao — a fresh random value each epoch tick.
-// Uses xorshift32 seeded per epoch to get a deterministic-but-varied distribution.
+// Uses xorshift32 with a per-run salt so each simulation run produces different results.
+
+const RUN_SALT = (Math.random() * 0xffffffff) >>> 0;
 
 function secondDemandForEpoch(epoch: number, primaryId: number, count: number): number {
-  // xorshift32 seeded with epoch — simulates unpredictable block.prevrandao
-  let x = (epoch * 2_654_435_761) >>> 0; // golden-ratio hashing
+  // xorshift32 seeded with epoch XOR a per-run salt — different each run
+  let x = ((epoch * 2_654_435_761) ^ RUN_SALT) >>> 0;
   x ^= x << 13;
   x ^= x >>> 17;
   x ^= x << 5;
