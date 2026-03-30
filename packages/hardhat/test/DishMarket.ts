@@ -154,7 +154,9 @@ describe("DishMarket", function () {
       await giveDish(seller1, 1);
       await dishToken.connect(seller1).approve(marketAddr, 1);
 
-      const minute = await market.currentMinute();
+      const epochStart = (Math.floor((await time.latest()) / EPOCH_DURATION) + 1) * EPOCH_DURATION;
+      await time.setNextBlockTimestamp(epochStart);
+      const minute = BigInt(epochStart / EPOCH_DURATION);
       await market.connect(seller1).submitOffer(0, ethers.parseEther("0.1"), 1n);
 
       const offers = await market.getOffers(minute);
@@ -171,7 +173,10 @@ describe("DishMarket", function () {
       await dishToken.connect(seller1).approve(marketAddr, 1);
       await dishToken.connect(seller2).approve(marketAddr, 1);
 
-      const minute = await market.currentMinute();
+      // Snap to epoch start so both offers land in the same epoch
+      const epochStart = (Math.floor((await time.latest()) / EPOCH_DURATION) + 1) * EPOCH_DURATION;
+      await time.setNextBlockTimestamp(epochStart);
+      const minute = BigInt(epochStart / EPOCH_DURATION);
       await market.connect(seller1).submitOffer(0, ethers.parseEther("0.5"), 1n);
       await market.connect(seller2).submitOffer(0, ethers.parseEther("0.3"), 1n);
 
@@ -201,6 +206,9 @@ describe("DishMarket", function () {
       const { market, marketAddr, dishToken, seller1, giveDish } = await loadFixture(deployFixture);
       await giveDish(seller1, 2);
       await dishToken.connect(seller1).approve(marketAddr, 2);
+      // Snap to epoch start so both offers land in the same epoch
+      const epochStart = (Math.floor((await time.latest()) / EPOCH_DURATION) + 1) * EPOCH_DURATION;
+      await time.setNextBlockTimestamp(epochStart);
       await market.connect(seller1).submitOffer(0, ethers.parseEther("0.1"), 1n);
       await expect(market.connect(seller1).submitOffer(0, ethers.parseEther("0.05"), 1n)).to.be.revertedWithCustomError(
         market,
@@ -212,7 +220,9 @@ describe("DishMarket", function () {
       const { market, marketAddr, dishToken, seller1, giveDish } = await loadFixture(deployFixture);
       await giveDish(seller1, 1);
       await dishToken.connect(seller1).approve(marketAddr, 1);
-      const minute = await market.currentMinute();
+      const epochStart = (Math.floor((await time.latest()) / EPOCH_DURATION) + 1) * EPOCH_DURATION;
+      await time.setNextBlockTimestamp(epochStart);
+      const minute = BigInt(epochStart / EPOCH_DURATION);
       await market.connect(seller1).submitOffer(0, ethers.parseEther("0.1"), 1n);
       const state = await market.minuteState(minute);
       expect(state.recipeId).to.equal(0);
@@ -498,6 +508,327 @@ describe("DishMarket", function () {
         market,
         "AskPriceExceedsCap",
       );
+    });
+  });
+
+  // ---- submitOffer — additional ----
+
+  describe("submitOffer — additional", function () {
+    it("reverts when amount is zero", async function () {
+      const { market, marketAddr, dishToken, seller1, giveDish } = await loadFixture(deployFixture);
+      await giveDish(seller1, 1);
+      await dishToken.connect(seller1).approve(marketAddr, 1);
+      await expect(market.connect(seller1).submitOffer(0, ethers.parseEther("0.1"), 0n)).to.be.revertedWithCustomError(
+        market,
+        "ZeroAmount",
+      );
+    });
+
+    it("reverts when recipeId is not demanded this epoch", async function () {
+      // With 1 recipe (recipeId 0), both primary and secondary snap to 0.
+      // Offering recipeId 1 (nonexistent) is not demanded → NotDemandedRecipe.
+      const { market, marketAddr, dishToken, seller1, giveDish } = await loadFixture(deployFixture);
+      await giveDish(seller1, 1);
+      await dishToken.connect(seller1).approve(marketAddr, 1);
+      await expect(market.connect(seller1).submitOffer(1, ethers.parseEther("0.1"), 1n)).to.be.revertedWithCustomError(
+        market,
+        "NotDemandedRecipe",
+      );
+    });
+
+    it("amount > 1 escrows multiple tokens; settle pays askPrice × amount", async function () {
+      const { market, marketAddr, dishToken, seller1, giveDish } = await loadFixture(deployFixture);
+      await giveDish(seller1, 2);
+      await dishToken.connect(seller1).approve(marketAddr, 2);
+
+      const epochStart = (Math.floor((await time.latest()) / EPOCH_DURATION) + 1) * EPOCH_DURATION;
+      await time.setNextBlockTimestamp(epochStart);
+      const minute = BigInt(epochStart / EPOCH_DURATION);
+      await market.connect(seller1).submitOffer(0, ethers.parseEther("0.1"), 2n);
+      expect(await dishToken.balanceOf(marketAddr)).to.equal(2);
+
+      await time.increase(EPOCH_DURATION + 1);
+      const supplyBefore = await dishToken.totalSupply();
+      const balBefore = await ethers.provider.getBalance(seller1.address);
+      const tx = await market.connect(seller1).settle(minute, 0);
+      const receipt = await tx.wait();
+      const gas = receipt!.gasUsed * receipt!.gasPrice;
+      const balAfter = await ethers.provider.getBalance(seller1.address);
+
+      expect(balAfter - balBefore + gas).to.equal(ethers.parseEther("0.2")); // 0.1 × 2
+      expect(await dishToken.totalSupply()).to.equal(supplyBefore - 2n); // 2 tokens burned
+    });
+
+    it("emits OfferSubmitted with correct recipeId", async function () {
+      const { market, marketAddr, dishToken, seller1, giveDish } = await loadFixture(deployFixture);
+      await giveDish(seller1, 1);
+      await dishToken.connect(seller1).approve(marketAddr, 1);
+      const epochStart = (Math.floor((await time.latest()) / EPOCH_DURATION) + 1) * EPOCH_DURATION;
+      await time.setNextBlockTimestamp(epochStart);
+      const minute = BigInt(epochStart / EPOCH_DURATION);
+      await expect(market.connect(seller1).submitOffer(0, ethers.parseEther("0.1"), 1n))
+        .to.emit(market, "OfferSubmitted")
+        .withArgs(minute, 0, seller1.address, ethers.parseEther("0.1"));
+    });
+  });
+
+  // ---- settle — additional ----
+
+  describe("settle — additional", function () {
+    // Shared: 2 sellers, past epoch, seller1@0.5 (index 0), seller2@0.3 (index 1, both win)
+    async function pastEpochFixture() {
+      const base = await deployFixture();
+      const { market, marketAddr, dishToken, seller1, seller2, giveDish } = base;
+      await giveDish(seller1, 1);
+      await giveDish(seller2, 1);
+      await dishToken.connect(seller1).approve(marketAddr, 1);
+      await dishToken.connect(seller2).approve(marketAddr, 1);
+      const epochStart = (Math.floor((await time.latest()) / EPOCH_DURATION) + 1) * EPOCH_DURATION;
+      await time.setNextBlockTimestamp(epochStart);
+      const minute = BigInt(epochStart / EPOCH_DURATION);
+      await market.connect(seller1).submitOffer(0, ethers.parseEther("0.5"), 1n); // index 0
+      await market.connect(seller2).submitOffer(0, ethers.parseEther("0.3"), 1n); // index 1
+      await time.increase(EPOCH_DURATION + 1);
+      return { ...base, minute };
+    }
+
+    // 5 cheap sellers (fill MAX_WINNERS) + 1 expensive seller (loses)
+    async function sixOfferSettleFixture() {
+      const base = await deployFixture();
+      const { market, marketAddr, dishToken, giveDish } = base;
+      const signers = await ethers.getSigners();
+      const cheapSellers = signers.slice(1, 6);
+      const expensiveSeller = signers[6];
+      for (const s of [...cheapSellers, expensiveSeller]) {
+        await giveDish(s, 1);
+        await dishToken.connect(s).approve(marketAddr, 1);
+      }
+      const epochStart = (Math.floor((await time.latest()) / EPOCH_DURATION) + 1) * EPOCH_DURATION;
+      await time.setNextBlockTimestamp(epochStart);
+      const minute = BigInt(epochStart / EPOCH_DURATION);
+      for (const s of cheapSellers) {
+        await market.connect(s).submitOffer(0, ethers.parseEther("0.1"), 1n);
+      }
+      await market.connect(expensiveSeller).submitOffer(0, ethers.parseEther("0.5"), 1n);
+      await time.increase(EPOCH_DURATION + 1);
+      return { ...base, cheapSellers, expensiveSeller, minute };
+    }
+
+    // 6 sellers all at the same price — array fills at 5, 6th is tied at cutoff
+    async function tiedOfferFixture() {
+      const base = await deployFixture();
+      const { market, marketAddr, dishToken, giveDish } = base;
+      const signers = await ethers.getSigners();
+      const sellers = signers.slice(1, 7); // 6 sellers
+      for (const s of sellers) {
+        await giveDish(s, 1);
+        await dishToken.connect(s).approve(marketAddr, 1);
+      }
+      const epochStart = (Math.floor((await time.latest()) / EPOCH_DURATION) + 1) * EPOCH_DURATION;
+      await time.setNextBlockTimestamp(epochStart);
+      const minute = BigInt(epochStart / EPOCH_DURATION);
+      for (const s of sellers) {
+        await market.connect(s).submitOffer(0, ethers.parseEther("0.1"), 1n);
+      }
+      await time.increase(EPOCH_DURATION + 1);
+      return { ...base, sellers, minute };
+    }
+
+    it("reverts with InvalidOfferIndex when index is out of range", async function () {
+      const { market, seller1, minute } = await loadFixture(pastEpochFixture);
+      await expect(market.connect(seller1).settle(minute, 99)).to.be.revertedWithCustomError(
+        market,
+        "InvalidOfferIndex",
+      );
+    });
+
+    it("reverts with NotYourOffer when caller is not the offer's seller", async function () {
+      const { market, seller1, minute } = await loadFixture(pastEpochFixture);
+      // seller1 tries to settle seller2's offer at index 1
+      await expect(market.connect(seller1).settle(minute, 1)).to.be.revertedWithCustomError(market, "NotYourOffer");
+    });
+
+    it("all MAX_WINNERS cheapest offers can each settle independently", async function () {
+      const { market, cheapSellers, minute } = await loadFixture(sixOfferSettleFixture);
+      for (let i = 0; i < cheapSellers.length; i++) {
+        await expect(market.connect(cheapSellers[i]).settle(minute, i)).to.not.be.reverted;
+      }
+    });
+
+    it("offer tied at the cutoff price also wins", async function () {
+      // 6 offers all at 0.1 ETH. Array fills after 5 (cutoff = 0.1). 6th offer: 0.1 <= 0.1 → wins.
+      const { market, sellers, minute } = await loadFixture(tiedOfferFixture);
+      for (let i = 0; i < sellers.length; i++) {
+        await expect(market.connect(sellers[i]).settle(minute, i)).to.not.be.reverted;
+      }
+    });
+
+    it("winner can withdraw escrowed tokens after epoch ends instead of settling", async function () {
+      // The cheapest-ask seller (would be a winner) can choose to withdraw after epoch ends.
+      // The epoch-active leader guard only blocks withdrawal DURING the epoch.
+      const { market, dishToken, seller2, minute } = await loadFixture(pastEpochFixture);
+      const balBefore = await dishToken.balanceOf(seller2.address);
+      await market.connect(seller2).withdrawOffer(minute, 1); // seller2 = lowest ask, index 1
+      expect(await dishToken.balanceOf(seller2.address)).to.equal(balBefore + 1n);
+    });
+  });
+
+  // ---- secondary demand ----
+
+  describe("secondary demand", function () {
+    // Adds a second recipe (Tomato Salad, same fruit) on top of the base fixture.
+    // With 2 recipes, secondary is always 1 - primary (count=2 leaves no other choice).
+    async function twoRecipeFixture() {
+      const base = await deployFixture();
+      const { chef, owner, farm, shop, tomato } = base;
+      const farmAddr = await farm.getAddress();
+      const chefAddr = await chef.getAddress();
+      const seedPrice = ethers.parseEther("0.03");
+
+      await chef
+        .connect(owner)
+        .addRecipe("Tomato Salad", [await farm.fruitToken(0)], [1], MIN, 1, "Tomato Salad", "TSALAD");
+      const [, , , dishToken1Addr] = await chef.getRecipe(1);
+      const dishToken1 = await ethers.getContractAt("DishToken", dishToken1Addr);
+
+      // Farm + cook helper for any recipe (same flow as base giveDish but parameterized)
+      const giveDishForRecipe = async (signer: typeof owner, recipeId: number, amount: number) => {
+        const seedToken = await ethers.getContractAt("SeedToken", await shop.seedToken(0));
+        for (let i = 0; i < amount; i++) {
+          if (Number(await farm.getLandState(0)) === 4) {
+            await farm.connect(owner).cleanUp(0, { value: 0 });
+          }
+          await shop.connect(owner).buy(0, 1, { value: seedPrice });
+          await seedToken.connect(owner).approve(farmAddr, 1);
+          await farm.connect(owner).plant(0, 0, 1);
+          await time.increase(2 * MIN + 1);
+          await farm.connect(owner).harvest(0);
+          await tomato.connect(owner).transfer(signer.address, 1);
+          await tomato.connect(signer).approve(chefAddr, 1);
+          await chef.connect(signer).startCooking(recipeId, 1);
+          await time.increase(MIN + 1);
+          await chef.connect(signer).claim(recipeId);
+        }
+      };
+
+      return { ...base, dishToken1, giveDishForRecipe };
+    }
+
+    it("primary and secondary are always different when 2 recipes exist", async function () {
+      const { market } = await loadFixture(twoRecipeFixture);
+      const primary = Number(await market.currentDemand());
+      const secondary = Number(await market.currentSecondDemand());
+      expect(primary).to.not.equal(secondary);
+      expect(primary).to.be.oneOf([0, 1]);
+      expect(secondary).to.be.oneOf([0, 1]);
+    });
+
+    it("user can offer for both primary and secondary in the same epoch", async function () {
+      const { market, marketAddr, dishToken, dishToken1, seller1, giveDish, giveDishForRecipe } =
+        await loadFixture(twoRecipeFixture);
+
+      await giveDish(seller1, 1);
+      await giveDishForRecipe(seller1, 1, 1);
+      await dishToken.connect(seller1).approve(marketAddr, 1);
+      await dishToken1.connect(seller1).approve(marketAddr, 1);
+
+      const epochStart = (Math.floor((await time.latest()) / EPOCH_DURATION) + 1) * EPOCH_DURATION;
+      await time.setNextBlockTimestamp(epochStart);
+      const minute = BigInt(epochStart / EPOCH_DURATION);
+      const primaryId = Number(minute % 2n);
+      const secondaryId = 1 - primaryId;
+
+      // Both offers must succeed: one per recipe per epoch is allowed
+      await market.connect(seller1).submitOffer(primaryId, ethers.parseEther("0.1"), 1n);
+      await market.connect(seller1).submitOffer(secondaryId, ethers.parseEther("0.1"), 1n);
+
+      expect(await market.hasOffered(minute, primaryId, seller1.address)).to.equal(true);
+      expect(await market.hasOffered(minute, secondaryId, seller1.address)).to.equal(true);
+    });
+
+    it("secondary recipe winner settles and receives ETH; secondary dish tokens burned", async function () {
+      const { market, marketAddr, dishToken, dishToken1, seller1, giveDish, giveDishForRecipe } =
+        await loadFixture(twoRecipeFixture);
+
+      await giveDish(seller1, 1);
+      await giveDishForRecipe(seller1, 1, 1);
+      await dishToken.connect(seller1).approve(marketAddr, 1);
+      await dishToken1.connect(seller1).approve(marketAddr, 1);
+
+      const epochStart = (Math.floor((await time.latest()) / EPOCH_DURATION) + 1) * EPOCH_DURATION;
+      await time.setNextBlockTimestamp(epochStart);
+      const minute = BigInt(epochStart / EPOCH_DURATION);
+      const primaryId = Number(minute % 2n);
+      const secondaryId = 1 - primaryId;
+
+      await market.connect(seller1).submitOffer(primaryId, ethers.parseEther("0.1"), 1n); // index 0
+      await market.connect(seller1).submitOffer(secondaryId, ethers.parseEther("0.15"), 1n); // index 1
+
+      await time.increase(EPOCH_DURATION + 1);
+
+      const secondaryDishToken = secondaryId === 0 ? dishToken : dishToken1;
+      const supplyBefore = await secondaryDishToken.totalSupply();
+      const balBefore = await ethers.provider.getBalance(seller1.address);
+      const tx = await market.connect(seller1).settle(minute, 1); // settle secondary offer
+      const receipt = await tx.wait();
+      const gas = receipt!.gasUsed * receipt!.gasPrice;
+      const balAfter = await ethers.provider.getBalance(seller1.address);
+
+      expect(balAfter - balBefore + gas).to.equal(ethers.parseEther("0.15"));
+      expect(await secondaryDishToken.totalSupply()).to.equal(supplyBefore - 1n);
+    });
+
+    it("reverts when offering for a recipe that is neither primary nor secondary", async function () {
+      // With 2 recipes, both 0 and 1 are demanded. Add a 3rd recipe; only 2 of the 3 are demanded.
+      const base = await loadFixture(twoRecipeFixture);
+      const { chef, owner, farm, market, marketAddr, dishToken, seller1, giveDish } = base;
+
+      // Recipe 2: same tomato fruit, just adds a third option
+      await chef
+        .connect(owner)
+        .addRecipe("Tomato Stew", [await farm.fruitToken(0)], [1], MIN, 1, "Tomato Stew", "TSTEW");
+      const [, , , dishToken2Addr] = await chef.getRecipe(2);
+      const dishToken2 = await ethers.getContractAt("DishToken", dishToken2Addr);
+
+      // Cook 1 dish for recipe 2 (via the base giveDish + manual startCooking)
+      await giveDish(seller1, 0); // just to seed land state — 0 iterations, no-op
+      // Farm manually for recipe 2
+      const chefAddr = await chef.getAddress();
+      const seedPrice = ethers.parseEther("0.03");
+      await base.shop.connect(owner).buy(0, 1, { value: seedPrice });
+      const seedToken = await ethers.getContractAt("SeedToken", await base.shop.seedToken(0));
+      await seedToken.connect(owner).approve(await base.farm.getAddress(), 1);
+      await base.farm.connect(owner).plant(0, 0, 1);
+      await time.increase(2 * MIN + 1);
+      await base.farm.connect(owner).harvest(0);
+      await base.tomato.connect(owner).transfer(seller1.address, 1);
+      await base.tomato.connect(seller1).approve(chefAddr, 1);
+      await chef.connect(seller1).startCooking(2, 1);
+      await time.increase(MIN + 1);
+      await chef.connect(seller1).claim(2);
+
+      await dishToken2.connect(seller1).approve(marketAddr, 1);
+
+      // Now there are 3 recipes. Primary = epoch % 3 = 0, 1, or 2.
+      // Secondary = prevrandao-derived, also one of the 3. One recipe is NOT demanded.
+      // The first offer snapshots both demanded recipes. Then offering recipeId that's not in {primary, secondary} must fail.
+      // Strategy: submit a valid offer first to lock in the snapshot, then try to offer for the undmanded recipe.
+      await giveDish(seller1, 1);
+      await dishToken.connect(seller1).approve(marketAddr, 1);
+      const minute = await market.currentMinute();
+      // Submit a valid primary offer to snapshot the epoch
+      await market.connect(seller1).submitOffer(0, ethers.parseEther("0.1"), 1n);
+      const state = await market.epochState(minute);
+      // Find which recipe is NOT in {primary, secondary}
+      const demandedSet = new Set([Number(state.recipeId), Number(state.secondRecipeId)]);
+      const notDemanded = [0, 1, 2].find(r => !demandedSet.has(r));
+      if (notDemanded !== undefined) {
+        const notDemandedToken = notDemanded === 0 ? dishToken : notDemanded === 2 ? dishToken2 : base.dishToken1;
+        await notDemandedToken.connect(seller1).approve(marketAddr, 1);
+        await expect(
+          market.connect(seller1).submitOffer(notDemanded, ethers.parseEther("0.1"), 1n),
+        ).to.be.revertedWithCustomError(market, "NotDemandedRecipe");
+      }
     });
   });
 });
