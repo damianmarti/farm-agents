@@ -463,10 +463,12 @@ async function manageMarket(
   }
 
   // ── Submit offer for both demanded dishes ────────────────────────────────
-  const availableFunds: bigint = await dishMarket.availableFunds();
-  if (availableFunds === 0n) {
-    log("  ⚠️  DishMarket treasury is empty");
-    return;
+  {
+    const initialFunds: bigint = await dishMarket.availableFunds();
+    if (initialFunds === 0n) {
+      log("  ⚠️  DishMarket treasury is empty");
+      return;
+    }
   }
 
   const primaryId: bigint = await dishMarket.currentDemand();
@@ -489,6 +491,13 @@ async function manageMarket(
     if (dishBal === 0n) {
       log(`  📈 Market demands ${demandedName} — no dish tokens yet`);
       continue;
+    }
+
+    // Re-read availableFunds each iteration: submitting the previous offer reduces it on-chain
+    const availableFunds: bigint = await dishMarket.availableFunds();
+    if (availableFunds === 0n) {
+      log("  ⚠️  DishMarket treasury exhausted");
+      break;
     }
 
     // Compute ask price = ASK_PRICE_PCT% of the seed cost to produce one dish

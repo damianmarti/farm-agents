@@ -819,7 +819,9 @@ describe("DishMarket", function () {
       // Strategy: submit a valid offer first to lock in the snapshot, then try to offer for the undmanded recipe.
       await giveDish(seller1, 1);
       await dishToken.connect(seller1).approve(marketAddr, 1);
-      const minute = await market.currentMinute();
+      const epochStart = (Math.floor((await time.latest()) / EPOCH_DURATION) + 1) * EPOCH_DURATION;
+      await time.setNextBlockTimestamp(epochStart);
+      const minute = BigInt(epochStart / EPOCH_DURATION);
       // Submit a valid primary offer to snapshot the epoch
       await market.connect(seller1).submitOffer(0, ethers.parseEther("0.1"), 1n);
       const state = await market.epochState(minute);
@@ -833,6 +835,113 @@ describe("DishMarket", function () {
           market.connect(seller1).submitOffer(notDemanded, ethers.parseEther("0.1"), 1n),
         ).to.be.revertedWithCustomError(market, "NotDemandedRecipe");
       }
+    });
+  });
+
+  // ---- withdrawFunds event (fix #4) ----
+
+  describe("withdrawFunds event", function () {
+    it("emits FundsWithdrawn on successful withdrawal", async function () {
+      const { market, owner } = await loadFixture(deployFixture);
+      await expect(market.connect(owner).withdrawFunds(ethers.parseEther("1")))
+        .to.emit(market, "FundsWithdrawn")
+        .withArgs(owner.address, ethers.parseEther("1"));
+    });
+  });
+
+  // ---- minuteState secondary fields (fix #3) ----
+
+  describe("minuteState secondary fields", function () {
+    it("exposes secondRecipeId, secondWinnerIndex, secondWinnerAskPrice", async function () {
+      const { market, marketAddr, dishToken, seller1, seller2, giveDish } = await loadFixture(deployFixture);
+      await giveDish(seller1, 1);
+      await giveDish(seller2, 1);
+      await dishToken.connect(seller1).approve(marketAddr, 1);
+      await dishToken.connect(seller2).approve(marketAddr, 1);
+
+      const epochStart = (Math.floor((await time.latest()) / EPOCH_DURATION) + 1) * EPOCH_DURATION;
+      await time.setNextBlockTimestamp(epochStart);
+      const minute = BigInt(epochStart / EPOCH_DURATION);
+      await market.connect(seller1).submitOffer(0, ethers.parseEther("0.5"), 1n);
+      await market.connect(seller2).submitOffer(0, ethers.parseEther("0.3"), 1n);
+
+      const state = await market.minuteState(minute);
+      // Primary fields unchanged
+      expect(state.recipeId).to.equal(0);
+      expect(state.winnerAskPrice).to.equal(ethers.parseEther("0.3"));
+      // Secondary fields now present in the return tuple
+      expect(state.secondRecipeId).to.equal(0); // with 1 recipe, secondary == primary
+      expect(state.secondWinnerAskPrice).to.equal(0); // no secondary offers submitted
+    });
+  });
+
+  // ---- rescueStaleOffer (fix #1 recovery) ----
+
+  describe("rescueStaleOffer", function () {
+    async function staleOfferFixture() {
+      const base = await deployFixture();
+      const { market, marketAddr, dishToken, seller1, giveDish } = base;
+      await giveDish(seller1, 1);
+      await dishToken.connect(seller1).approve(marketAddr, 1);
+      const epochStart = (Math.floor((await time.latest()) / EPOCH_DURATION) + 1) * EPOCH_DURATION;
+      await time.setNextBlockTimestamp(epochStart);
+      const offerEpoch = BigInt(epochStart / EPOCH_DURATION);
+      await market.connect(seller1).submitOffer(0, ethers.parseEther("0.1"), 1n);
+      // Advance past RESCUE_DELAY (100 epochs × 10 s = 1000 s)
+      await time.increase(100 * EPOCH_DURATION + 1);
+      return { ...base, offerEpoch };
+    }
+
+    it("restores availableFunds and returns dish tokens to the seller", async function () {
+      const { market, dishToken, owner, seller1, offerEpoch } = await loadFixture(staleOfferFixture);
+      const fundsBefore = await market.availableFunds();
+      const tokensBefore = await dishToken.balanceOf(seller1.address);
+
+      await market.connect(owner).rescueStaleOffer(offerEpoch, 0);
+
+      expect(await market.availableFunds()).to.equal(fundsBefore + ethers.parseEther("0.1"));
+      expect(await dishToken.balanceOf(seller1.address)).to.equal(tokensBefore + 1n);
+    });
+
+    it("reverts before RESCUE_DELAY epochs have passed", async function () {
+      const base = await deployFixture();
+      const { market, marketAddr, dishToken, seller1, owner, giveDish } = base;
+      await giveDish(seller1, 1);
+      await dishToken.connect(seller1).approve(marketAddr, 1);
+      const epochStart = (Math.floor((await time.latest()) / EPOCH_DURATION) + 1) * EPOCH_DURATION;
+      await time.setNextBlockTimestamp(epochStart);
+      const offerEpoch = BigInt(epochStart / EPOCH_DURATION);
+      await market.connect(seller1).submitOffer(0, ethers.parseEther("0.1"), 1n);
+      await time.increase(EPOCH_DURATION + 1); // epoch ended but rescue delay not reached
+
+      await expect(market.connect(owner).rescueStaleOffer(offerEpoch, 0)).to.be.revertedWithCustomError(
+        market,
+        "OfferNotStale",
+      );
+    });
+
+    it("reverts when offer is already claimed", async function () {
+      const { market, owner, seller1, offerEpoch } = await loadFixture(staleOfferFixture);
+      await market.connect(seller1).withdrawOffer(offerEpoch, 0);
+      await expect(market.connect(owner).rescueStaleOffer(offerEpoch, 0)).to.be.revertedWithCustomError(
+        market,
+        "AlreadyClaimed",
+      );
+    });
+
+    it("reverts when called by non-owner", async function () {
+      const { market, seller1, offerEpoch } = await loadFixture(staleOfferFixture);
+      await expect(market.connect(seller1).rescueStaleOffer(offerEpoch, 0)).to.be.revertedWithCustomError(
+        market,
+        "OnlyOwner",
+      );
+    });
+
+    it("emits OfferRescued event", async function () {
+      const { market, owner, seller1, offerEpoch } = await loadFixture(staleOfferFixture);
+      await expect(market.connect(owner).rescueStaleOffer(offerEpoch, 0))
+        .to.emit(market, "OfferRescued")
+        .withArgs(offerEpoch, 0, seller1.address, ethers.parseEther("0.1"));
     });
   });
 

@@ -28,8 +28,9 @@ import { SeedShop } from "./SeedShop.sol";
  *      `availableFunds` tracks uncommitted ETH to prevent over-committing the treasury.
  */
 contract DishMarket is ReentrancyGuard {
-    uint256 public constant EPOCH_DURATION = 10; // seconds per demand epoch
-    uint256 public constant MAX_WINNERS = 5;      // top-N cheapest offers win per recipe per epoch
+    uint256 public constant EPOCH_DURATION = 10;  // seconds per demand epoch
+    uint256 public constant MAX_WINNERS = 5;       // top-N cheapest offers win per recipe per epoch
+    uint256 public constant RESCUE_DELAY = 100;    // epochs before owner may reclaim stale committed funds
 
     address public immutable owner;
     Chef public immutable chef;
@@ -92,6 +93,7 @@ contract DishMarket is ReentrancyGuard {
     error TokenNotRegistered();
     error ZeroAmount();
     error NotDemandedRecipe();
+    error OfferNotStale();
 
     // ---- Events ----
 
@@ -99,6 +101,8 @@ contract DishMarket is ReentrancyGuard {
     event EpochSettled(uint256 indexed epoch, uint256 indexed recipeId, address indexed winner, uint256 askPrice);
     event OfferWithdrawn(uint256 indexed epoch, uint256 offerIndex, address indexed seller);
     event Funded(address indexed funder, uint256 amount);
+    event FundsWithdrawn(address indexed to, uint256 amount);
+    event OfferRescued(uint256 indexed epoch, uint256 offerIndex, address indexed seller, uint256 fundsRestored);
 
     // ---- Constructor ----
 
@@ -128,6 +132,7 @@ contract DishMarket is ReentrancyGuard {
         availableFunds -= amount;
         (bool ok, ) = owner.call{ value: amount }("");
         if (!ok) revert TransferFailed();
+        emit FundsWithdrawn(owner, amount);
     }
 
     // ---- View ----
@@ -147,10 +152,12 @@ contract DishMarket is ReentrancyGuard {
     /// @notice Alias for epochState — kept for frontend/bot compatibility.
     function minuteState(uint256 epoch) external view returns (
         uint256 recipeId, bool hasOffers_, bool settled,
-        uint256 winnerIndex, uint256 winnerAskPrice
+        uint256 winnerIndex, uint256 winnerAskPrice,
+        uint256 secondRecipeId, uint256 secondWinnerIndex, uint256 secondWinnerAskPrice
     ) {
         EpochState storage s = epochState[epoch];
-        return (s.recipeId, s.hasOffers, s.settledCount > 0, s.winnerIndex, s.winnerAskPrice);
+        return (s.recipeId, s.hasOffers, s.settledCount > 0, s.winnerIndex, s.winnerAskPrice,
+                s.secondRecipeId, s.secondWinnerIndex, s.secondWinnerAskPrice);
     }
 
     // ---- Demand view functions ----
@@ -457,5 +464,30 @@ contract DishMarket is ReentrancyGuard {
         IERC20(dishTokenAddr).transfer(msg.sender, offer.amount);
 
         emit OfferWithdrawn(epoch, offerIndex, msg.sender);
+    }
+
+    /**
+     * @notice Owner reclaims committed funds for an offer the seller abandoned.
+     * @dev Callable only after RESCUE_DELAY epochs have passed since the offer epoch,
+     *      giving sellers ample time to withdraw normally. Restores the committed ETH
+     *      to availableFunds and returns the escrowed dish tokens to the seller.
+     * @param epoch      The epoch the offer was submitted in.
+     * @param offerIndex Index of the unclaimed offer to rescue.
+     */
+    function rescueStaleOffer(uint256 epoch, uint256 offerIndex) external onlyOwner nonReentrant {
+        if (currentEpoch() < epoch + RESCUE_DELAY) revert OfferNotStale();
+        if (offerIndex >= _offers[epoch].length) revert InvalidOfferIndex();
+
+        Offer storage offer = _offers[epoch][offerIndex];
+        if (offer.claimed) revert AlreadyClaimed();
+
+        offer.claimed = true;
+        uint256 fundsRestored = offer.askPrice * offer.amount;
+        availableFunds += fundsRestored;
+
+        (, , , address dishTokenAddr) = chef.getRecipe(offer.recipeId);
+        IERC20(dishTokenAddr).transfer(offer.seller, offer.amount);
+
+        emit OfferRescued(epoch, offerIndex, offer.seller, fundsRestored);
     }
 }

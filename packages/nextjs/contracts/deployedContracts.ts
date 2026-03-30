@@ -469,6 +469,11 @@ const deployedContracts = {
         },
         {
           inputs: [],
+          name: "OfferNotStale",
+          type: "error",
+        },
+        {
+          inputs: [],
           name: "NotWinner",
           type: "error",
         },
@@ -624,6 +629,56 @@ const deployedContracts = {
           type: "event",
         },
         {
+          anonymous: false,
+          inputs: [
+            {
+              indexed: true,
+              internalType: "address",
+              name: "to",
+              type: "address",
+            },
+            {
+              indexed: false,
+              internalType: "uint256",
+              name: "amount",
+              type: "uint256",
+            },
+          ],
+          name: "FundsWithdrawn",
+          type: "event",
+        },
+        {
+          anonymous: false,
+          inputs: [
+            {
+              indexed: true,
+              internalType: "uint256",
+              name: "epoch",
+              type: "uint256",
+            },
+            {
+              indexed: false,
+              internalType: "uint256",
+              name: "offerIndex",
+              type: "uint256",
+            },
+            {
+              indexed: true,
+              internalType: "address",
+              name: "seller",
+              type: "address",
+            },
+            {
+              indexed: false,
+              internalType: "uint256",
+              name: "fundsRestored",
+              type: "uint256",
+            },
+          ],
+          name: "OfferRescued",
+          type: "event",
+        },
+        {
           inputs: [],
           name: "EPOCH_DURATION",
           outputs: [
@@ -639,6 +694,19 @@ const deployedContracts = {
         {
           inputs: [],
           name: "MAX_WINNERS",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [],
+          name: "RESCUE_DELAY",
           outputs: [
             {
               internalType: "uint256",
@@ -947,6 +1015,21 @@ const deployedContracts = {
               name: "winnerAskPrice",
               type: "uint256",
             },
+            {
+              internalType: "uint256",
+              name: "secondRecipeId",
+              type: "uint256",
+            },
+            {
+              internalType: "uint256",
+              name: "secondWinnerIndex",
+              type: "uint256",
+            },
+            {
+              internalType: "uint256",
+              name: "secondWinnerAskPrice",
+              type: "uint256",
+            },
           ],
           stateMutability: "view",
           type: "function",
@@ -1051,6 +1134,24 @@ const deployedContracts = {
             },
           ],
           name: "withdrawOffer",
+          outputs: [],
+          stateMutability: "nonpayable",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "uint256",
+              name: "epoch",
+              type: "uint256",
+            },
+            {
+              internalType: "uint256",
+              name: "offerIndex",
+              type: "uint256",
+            },
+          ],
+          name: "rescueStaleOffer",
           outputs: [],
           stateMutability: "nonpayable",
           type: "function",
